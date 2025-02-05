@@ -244,11 +244,11 @@ impl LbmDomain {
             match eti.as_ref().expect("eti should be initialized") {
                 VariableFloatBuffer::U16(eti_u16) => {
                     kernel_args!(stream_collide_builder, ("E_var", e_var.as_ref().expect("e_var")), ("eti", eti_u16), ("et", et.as_ref().expect("et")), ("ecrf", lbm_config.ecr_freq));
-                    kernel_args!(initialize_builder,                                                ("eti", eti_u16), ("et", et.as_ref().expect("et")))
+                    kernel_args!(initialize_builder,                                                ("eti", eti_u16), ("et", et.as_ref().expect("et")));
                 },
                 VariableFloatBuffer::F32(eti_f32) => {
                     kernel_args!(stream_collide_builder, ("E_var", e_var.as_ref().expect("e_var")), ("eti", eti_f32), ("et", et.as_ref().expect("et")), ("ecrf", lbm_config.ecr_freq));
-                    kernel_args!(initialize_builder,                                                ("eti", eti_f32), ("et", et.as_ref().expect("et")))
+                    kernel_args!(initialize_builder,                                                ("eti", eti_f32), ("et", et.as_ref().expect("et")));
                 },
             }
         }
@@ -741,6 +741,7 @@ fn get_device_defines(
     + &if lbm_config.ext_subgrid_ecr {
      "\n	#define SUBGRID_ECR".to_owned()
     +"\n	#define DEF_KKBME "       + &format!("{:?}f", lbm_config.units.kkBme_lu())
+    +"\n	#define DEF_KEABS "       + &format!("{:?}f", lbm_config.units.keabs_lu())
     } else {"".to_string()}
     + if lbm_config.ext_force_field {                "\n	#define FORCE_FIELD"} else {""}
     + if lbm_config.graphics_config.graphics_active {"\n	#define UPDATE_FIELDS"} else {""}

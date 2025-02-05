@@ -157,6 +157,8 @@ pub struct Lbm {
     pub charges: Option<Vec<(u64, f32)>>,
     /// A vector of Magnets positioned in the simulation via a 1D index. Used in static field computation. 
     pub magnets: Option<Vec<(u64, [f32; 3])>>,
+    /// A vector of Charges positioned in the simulation via a 1D index. Used in variable field computation. 
+    pub charges_var: Option<Vec<(u64, f32)>>,
     initialized: bool,
 }
 
@@ -211,6 +213,7 @@ impl Lbm {
             config: lbm_config,
             charges: None,
             magnets: None,
+            charges_var: None,
             initialized: false,
         }
     }

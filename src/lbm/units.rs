@@ -174,6 +174,10 @@ impl Units {
         (-22734499.72063751808909449412_f64 / (sqd(self.m as f64) / (sqd(self.s as f64) * self.k as f64)) ) as f32
     }
 
+    pub fn keabs_lu(&self) -> f32 { // -1.5 * 1.38064852e-23J/K / 9.10938356e-31kg -- m^2 * s^-2 * K^-1
+        (1.40897016100511360652E-8_f64 / (sqd(self.a as f64) * sqd(self.s as f64) / self.kg as f64 ) ) as f32
+    }
+
     /// From lbm.n_x and velocity u
     pub fn nu_from_Re(&self, Re: f32, x: f32, u: f32) -> f32 {
         x * u / Re

@@ -551,7 +551,9 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			// cyclotron resonance heating. The electron temperature is assumed to be proportional to
 			// the gyrating motion of the electrons in a magnetic field, the speed in the electron gas ddfs
 			// represents a guiding center drift.
-			/* ---- Electron temperature ---- */
+
+
+			/* --- Electron temperature 1 --- */
 			float ethn[7]; // read from gA and stream to gh (D3Q7 subset, periodic boundary conditions)
 			load_a(n, ethn, eti, j7, t); // perform streaming (part 2)
 			float Etn;
@@ -562,8 +564,29 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			for(uint i=0u; i<7u; i++) Etn += ethn[i]; // calculate temperature from g
 			Etn += 1.0f; // add 1.0f last to avoid digit extinction effects when summing up gi (perturbation method / DDF-shifting)
 			//}
+
+
+			/* --------- ECR heating -------- */
+			float3 Env = {E_var[nxi], E_var[nyi], E_var[nzi]}; // Oscillating electric field as vector
+			// calculate energy absorbtion under the possibility that frequency does not fulfill ECR condition
+			float f_c = length(Bn) * (1.0f / (DEF_KME * 2.0f * M_PI_F)); // The cyclotron frequency needed to fulfill ECR condition at current cell
+			float rel_absorbtion = 1.0f / (1.0f + sq(ecrf / (0.03125 * f_c) - 32)); // dampening value 0.03125/32, computed through simulation and best fit aproximation
+			float Env_mag = length(Env - (dot(Env, Bn) / sq(length(B)))*Bn); // Magnitude of oscillating electric field components perpendicular to B, only these have effect for ECR
+			Etn += DEF_KEABS * DEF_KKGE / DEF_KKBME * rhon_e  * sq(Env_mag); // Energy increase W = (e² / 2m_e²) * m_e_all * E²
+
+			// Drift of gyrating electrons in magnetic field. We assume all kinetic energy from electron
+			// temperature is directed perpendicular to the magnetic field. https://doi.org/10.1007/978-3-662-55236-0_1 2.2.4
+			// dv_∥/dt = (-0.5 * v_⟂^2 ∇ B)/B = (-1.5 * k_B * T_e * ∇ B)/(m_e * B)
+			float3 delta_u_par = (DEF_KKBME * Etn * grad_mag_v(n, B_dyn)) / length(Bn); // time step length = 1
+			uxn_e += delta_u_par.x;
+			uyn_e += delta_u_par.y;
+			uzn_e += delta_u_par.z;
+			Etn -= length(delta_u_par) / DEF_KKBME // Temperature reduces proportional to the drift velocity
+
+
+			/* --- Electron temperature 2 --- */
 			float eteq[7]; // cache f_equilibrium[n]
-			calculate_a_eq(Etn, uxn, uyn, uzn, eteq); // calculate equilibrium DDFs
+			calculate_a_eq(Etn, uxn_e, uyn_e, uzn_e, eteq); // calculate equilibrium DDFs
 			//if(flagsn&TYPE_T) {
 			//	for(uint i=0u; i<7u; i++) ethn[i] = eteq[i]; // just write eteq to ethn (no collision)
 			//} else {
@@ -573,22 +596,6 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			for(uint i=0u; i<7u; i++) ethn[i] = fma(1.0f-def_w_T, ethn[i], def_w_T*eteq[i]); // perform collision
 			//}
 			store_a(n, ethn, gi, j7, t); // perform streaming (part 1)
-
-
-			/* --------- ECR heating -------- */
-			float3 Env = {E_var[nxi], E_var[nyi], E_var[nzi]}; // Oscillating electric field as vector
-			// calculate energy absorbtion under the possibility that frequency does not fulfill ECR condition
-			float f_c = length(Bn) * (1.0f / (DEF_KME * 2.0f * M_PI_F)); // The cyclotron frequency needed to fulfill ECR condition at current cell
-			float rel_absorbtion = 1.0f / (1.0f + sq(ecrf / (0.03125 * f_c) - 32)); // dampening value 0.03125/32, computed through simulation and best fit aproximation
-			float Env_mag = length(Env - (dot(Env, Bn) / sq(length(B)))*Bn); // Magnitude of oscillating electric field components perpendicular to B, only these have effect for ECR
-
-			// Drift of gyrating electrons in magnetic field. We assume all kinetic energy from electron
-			// temperature is directed perpendicular to the magnetic field. https://doi.org/10.1007/978-3-662-55236-0_1 2.2.4
-			// dv_∥/dt = (-0.5 * v_⟂^2 ∇ B)/B = (-1.5 * k_B * T_e * ∇ B)/(m_e * B)
-			float3 delta_u_par = (DEF_KKBME * Etn * grad_mag_v(n, B_dyn)) / length(Bn);
-			uxn_e += delta_u_par.x;
-			uyn_e += delta_u_par.y;
-			uzn_e += delta_u_par.z;
 
 
 			/* --------- Ionization --------- */

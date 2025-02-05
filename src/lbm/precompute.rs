@@ -83,6 +83,59 @@ pub fn precompute_E(lbm: &Lbm) {
     }
 }
 
+#[allow(unused)] // Variables are mutated with deborrow
+/// Precomputes the variable electric field from a Vector of charges. Represented as a static field, as only vector length orthogonal to b is relevant
+pub fn precompute_E_var(lbm: &Lbm) {
+    if lbm.charges_var.is_none() {
+        println!("Cannot precompute E because there are no charges");
+        return;
+    }
+
+    // Set variables
+    let n = lbm.config.n_x as u64 * lbm.config.n_y as u64 * lbm.config.n_z as u64;
+    let (domain_numbers, dx, dy, dz, dsx, dsy, dsz) = domain_sizes(&lbm.config);
+    let dtotal = dsx as u64 * dsy as u64 * dsz as u64;
+    let lengths: (u32, u32, u32) = (lbm.config.n_x, lbm.config.n_y, lbm.config.n_z);
+    let def_ke = lbm.config.units.ke_lu();
+    let charges = lbm.charges_var.as_ref().unwrap();
+
+    println!(
+        "Precomputing variable electric field for {} charges and {} cells. (This may take a while)",
+        charges.len(),
+        n
+    );
+
+    let charges_u32_3_pos: Vec<([u32; 3], f32)> = u32_3_pos(&charges, lengths);
+    
+    for d in 0..domain_numbers {
+        let mut e_field: Vec<f32> = vec![0.0; (n * 3) as usize];
+        let x = (d % (dx * dy)) % dx; // Current Domain coordinates
+        let y = (d % (dx * dy)) / dx;
+        let z = d / (dx * dy);
+    
+        (0..dtotal).into_par_iter().for_each(|i| {
+            let xdi = (i % (dsx * dsy) as u64) as u32 % dsx;
+            let ydi = (i % (dsx * dsy) as u64) as u32 / dsx;
+            let zdi = (i / (dsx * dsy) as u64) as u32;
+            if ((xdi == 0 || xdi == dsx - 1) && dx > 1) || ((ydi == 0 || ydi == dsy - 1) && dy > 1) || ((zdi == 0 || zdi == dsz - 1) && dz > 1) {
+                return; // Do not set at halo offsets
+            }
+            let coord_cell = [ // Global xyz coordinates
+                xdi - (dx > 1) as u32 + x * (dsx - (dx > 1) as u32 * 2),
+                ydi - (dy > 1) as u32 + y * (dsy - (dy > 1) as u32 * 2),
+                zdi - (dz > 1) as u32 + z * (dsz - (dz > 1) as u32 * 2),
+            ];
+            let e_at = calculate_e_at(&charges_u32_3_pos, coord_cell, def_ke);
+            deborrow(&e_field)[i as usize] = e_at[0];
+            deborrow(&e_field)[(i + dtotal) as usize] = e_at[1];
+            deborrow(&e_field)[(i + (dtotal * 2)) as usize] = e_at[2];
+        });
+    
+        // Write to device
+        bwrite!(lbm.domains[d as usize].e_var.as_ref().expect("e_var"), e_field);
+    }
+}
+
 /// Calculates electric field vector at a cell with index n
 /// from a vector of charges.
 fn calculate_e_at(
