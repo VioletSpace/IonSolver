@@ -391,6 +391,14 @@ bool is_in_camera_frustrum(const float3 p, const float* camera_cache) { // retur
 	return is_above_plane(p, plane_p_top, plane_n_top)&&is_above_plane(p, plane_p_bottom, plane_n_bottom)&&is_above_plane(p, plane_p_left, plane_n_left)&&is_above_plane(p, plane_p_right, plane_n_right);
 } // End Line3D
 
+#ifdef SUBGRID_ECR
+float ecr_cond(float Bx, float By, float Bz, float ecrf) {
+	float f_c = sqrt(sq(Bx) + sq(By) + sq(Bz)) * (1.0f / (DEF_KME * 2.0f * M_PI_F));
+	return 1.0f / (1.0f + sq(ecrf / (0.03125 * f_c) - 32));
+}
+#endif
+
+
 // Color maps. Coloring scheme (float [0, 1]-> int color)
 int iron_colormap(float x) { // Sequential colour map similar to the inferno map. Usable for 2D contexts. Not to be used for 3D surfaces (Too dark at the lower end).
 	x = clamp(4.0f*(1.0f-x), 0.0f, 4.0f);
@@ -782,6 +790,98 @@ kernel void graphics_q(const global uchar* flags, const global float* u, const g
 	v[7] = calculate_Q_cached(      uj[ 6]    , load_u(j[29], u), load_u(j[30], u),       uj[ 3]    , load_u(j[31], u),       uj[ 4]    );
 	float3 triangles[15]; // maximum of 5 triangles with 3 vertices each
 	const uint tn = marching_cubes(v, DEF_SCALE_Q_MIN, triangles); // run marching cubes algorithm
+	if(tn==0u) return;
+	for(uint i=0u; i<tn; i++) {
+		const float3 p0 = triangles[3u*i   ]; // triangle coordinates in [0,1] (local cell)
+		const float3 p1 = triangles[3u*i+1u];
+		const float3 p2 = triangles[3u*i+2u];
+		const float3 normal = normalize(cross(p1-p0, p2-p0));
+		int c0, c1, c2; {
+			const float x1=p0.x, y1=p0.y, z1=p0.z, x0=1.0f-x1, y0=1.0f-y1, z0=1.0f-z1; // calculate interpolation factors
+			const float3 ui = (x0*y0*z0)*uj[0]+(x1*y0*z0)*uj[1]+(x1*y0*z1)*uj[2]+(x0*y0*z1)*uj[3]+(x0*y1*z0)*uj[4]+(x1*y1*z0)*uj[5]+(x1*y1*z1)*uj[6]+(x0*y1*z1)*uj[7]; // perform trilinear interpolation
+			c0 = shading(viridis_colormap(DEF_SCALE_U*length(ui)), p+p0, normal, camera_cache); // viridis_colormap(DEF_SCALE_U*length(ui));
+		} {
+			const float x1=p1.x, y1=p1.y, z1=p1.z, x0=1.0f-x1, y0=1.0f-y1, z0=1.0f-z1; // calculate interpolation factors
+			const float3 ui = (x0*y0*z0)*uj[0]+(x1*y0*z0)*uj[1]+(x1*y0*z1)*uj[2]+(x0*y0*z1)*uj[3]+(x0*y1*z0)*uj[4]+(x1*y1*z0)*uj[5]+(x1*y1*z1)*uj[6]+(x0*y1*z1)*uj[7]; // perform trilinear interpolation
+			c1 = shading(viridis_colormap(DEF_SCALE_U*length(ui)), p+p1, normal, camera_cache); // viridis_colormap(DEF_SCALE_U*length(ui));
+		} {
+			const float x1=p2.x, y1=p2.y, z1=p2.z, x0=1.0f-x1, y0=1.0f-y1, z0=1.0f-z1; // calculate interpolation factors
+			const float3 ui = (x0*y0*z0)*uj[0]+(x1*y0*z0)*uj[1]+(x1*y0*z1)*uj[2]+(x0*y0*z1)*uj[3]+(x0*y1*z0)*uj[4]+(x1*y1*z0)*uj[5]+(x1*y1*z1)*uj[6]+(x0*y1*z1)*uj[7]; // perform trilinear interpolation
+			c2 = shading(viridis_colormap(DEF_SCALE_U*length(ui)), p+p2, normal, camera_cache); // viridis_colormap(DEF_SCALE_U*length(ui));
+		}
+		draw_triangle_interpolated(p+p0, p+p1, p+p2, c0, c1, c2, camera_cache, bitmap, zbuffer); // draw triangle with interpolated colors
+	}
+}
+
+kernel void graphics_ecrc(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer) {
+	const uint n = get_global_id(0);
+	const uint3 xyz = coordinates(n);
+	if(xyz.x>=DEF_NX-1u||xyz.y>=DEF_NY-1u||xyz.z>=DEF_NZ-1u||is_halo_q(xyz)) return; // don't execute graphics_q_field() on marching-cubes halo
+	const float3 p = position(xyz);
+	float camera_cache[15]; // cache camera parameters in case the kernel draws more than one shape
+	for(uint i=0u; i<15u; i++) camera_cache[i] = camera[i];
+	if(!is_in_camera_frustrum(p, camera_cache)) return; // skip loading LBM data if grid cell is not visible
+	const uint x0 =  xyz.x; // cube stencil
+	const uint xp =  xyz.x+1u;
+	const uint y0 =  xyz.y    *DEF_NX;
+	const uint yp = (xyz.y+1u)*DEF_NX;
+	const uint z0 =  xyz.z    *DEF_NY*DEF_NX;
+	const uint zp = (xyz.z+1u)*DEF_NY*DEF_NX;
+	const uint xq =  (xyz.x       +2u)%DEF_NX; // central difference stencil on each cube corner point
+	const uint xm =  (xyz.x+DEF_NX-1u)%DEF_NX;
+	const uint yq = ((xyz.y       +2u)%DEF_NY)*DEF_NX;
+	const uint ym = ((xyz.y+DEF_NY-1u)%DEF_NY)*DEF_NX;
+	const uint zq = ((xyz.z       +2u)%DEF_NZ)*DEF_NY*DEF_NX;
+	const uint zm = ((xyz.z+DEF_NZ-1u)%DEF_NZ)*DEF_NY*DEF_NX;
+	uint j[32];
+	j[ 0] = n       ; // 000 // cube stencil
+	j[ 1] = xp+y0+z0; // +00
+	j[ 2] = xp+y0+zp; // +0+
+	j[ 3] = x0+y0+zp; // 00+
+	j[ 4] = x0+yp+z0; // 0+0
+	j[ 5] = xp+yp+z0; // ++0
+	j[ 6] = xp+yp+zp; // +++
+	j[ 7] = x0+yp+zp; // 0++
+	j[ 8] = xm+y0+z0; // -00 // central difference stencil on each cube corner point
+	j[ 9] = x0+ym+z0; // 0-0
+	j[10] = x0+y0+zm; // 00-
+	j[11] = xq+y0+z0; // #00
+	j[12] = xp+ym+z0; // +-0
+	j[13] = xp+y0+zm; // +0-
+	j[14] = xq+y0+zp; // #0+
+	j[15] = xp+ym+zp; // +-+
+	j[16] = xp+y0+zq; // +0#
+	j[17] = xm+y0+zp; // -0+
+	j[18] = x0+ym+zp; // 0-+
+	j[19] = x0+y0+zq; // 00#
+	j[20] = xm+yp+z0; // -+0
+	j[21] = x0+yq+z0; // 0#0
+	j[22] = x0+yp+zm; // 0+-
+	j[23] = xq+yp+z0; // #+0
+	j[24] = xp+yq+z0; // +#0
+	j[25] = xp+yp+zm; // ++-
+	j[26] = xq+yp+zp; // #++
+	j[27] = xp+yq+zp; // +#+
+	j[28] = xp+yp+zq; // ++#
+	j[29] = xm+yp+zp; // -++
+	j[30] = x0+yq+zp; // 0#+
+	j[31] = x0+yp+zq; // 0+#
+	uchar flags_cell = 0u;
+	for(uint i=0u; i<32u; i++) flags_cell |= flags[j[i]];
+	if(flags_cell&(TYPE_S|TYPE_E|TYPE_I|TYPE_G)) return;
+	float3 uj[8];
+	for(uint i=0u; i<8u; i++) uj[i] = load_u(j[i], u);
+	float v[8];
+	v[0] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[1] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[2] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[3] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[4] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[5] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[6] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	v[7] = ecr_cond(B_dyn[j[0]], B_dyn[j[0]+DEF_N], B_dyn[j[0]+2*DEF_N, ecrf]);
+	float3 triangles[15]; // maximum of 5 triangles with 3 vertices each
+	const uint tn = marching_cubes(v, 0.1, triangles); // run marching cubes algorithm
 	if(tn==0u) return;
 	for(uint i=0u; i<tn; i++) {
 		const float3 p0 = triangles[3u*i   ]; // triangle coordinates in [0,1] (local cell)
