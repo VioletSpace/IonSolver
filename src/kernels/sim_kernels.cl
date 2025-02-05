@@ -572,7 +572,7 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			float f_c = length(Bn) * (1.0f / (DEF_KME * 2.0f * M_PI_F)); // The cyclotron frequency needed to fulfill ECR condition at current cell
 			float rel_absorbtion = 1.0f / (1.0f + sq(ecrf / (0.03125 * f_c) - 32)); // dampening value 0.03125/32, computed through simulation and best fit aproximation
 			float Env_mag = length(Env - (dot(Env, Bn) / sq(length(B)))*Bn); // Magnitude of oscillating electric field components perpendicular to B, only these have effect for ECR
-			Etn += DEF_KEABS * DEF_KKGE / DEF_KKBME * rhon_e  * sq(Env_mag); // Energy increase W = (e² / 2m_e²) * m_e_all * E²
+			Etn += DEF_KEABS / DEF_KKBME * rhon_e / DEF_KKGE  * sq(Env_mag); // Energy increase W = (e² / 2m_e²) * m_e_all * E²
 
 			// Drift of gyrating electrons in magnetic field. We assume all kinetic energy from electron
 			// temperature is directed perpendicular to the magnetic field. https://doi.org/10.1007/978-3-662-55236-0_1 2.2.4
