@@ -6,38 +6,39 @@
 //! ## MPI Error codes
 //! - **100**: Incompatible domain number and number of execution nodes
 
-use std::cmp::max;
+use std::{cmp::max, f32::consts::PI};
 
 use image::{ImageBuffer, Rgb};
-use mpi::{datatype::PartitionMut, point_to_point, traits::*, Count};
-use ocl_macros::default_device;
+use mpi::{datatype::PartitionMut, point_to_point, topology::SimpleCommunicator, traits::*, Count};
+use ocl_macros::*;
 
-use crate::*;
+use super::*;
 
 
 /// Run IonSolver on multiple compute nodes without multi-gpu support.
 /// This function starts a single node with control over one `LbmDomain`.
 pub fn run_node() {
     let universe = mpi::initialize().unwrap();
-    let world: mpi::topology::SimpleCommunicator = universe.world();
+    let world: SimpleCommunicator = universe.world();
     let size = world.size();
     let rank = world.rank();
-    rprintln!("IonSolver - © 2024\n", world);
-    rprintln!("IonSolver - © 2024\n", world);
+    rprintln("IonSolver - © 2024\n", &world);
     println!("Launched Node {} of {}", rank, size);
 
     let mut cfg: LbmConfig;
     if rank == 0 { // If root, read and send config to all nodes
         cfg = LbmConfig::new();
-        cfg.units.set(128.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001);
-        cfg.n_x = 128;
-        cfg.n_y = 128;
-        cfg.n_z = 256;
+        cfg.units.set(1320.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
+        cfg.n_x = 1320;
+        cfg.n_y = 1320;
+        cfg.n_z = 1320;
+        cfg.d_x = 4;
+        cfg.d_y = 4;
         cfg.d_z = 2;
-        cfg.nu = cfg.units.si_to_nu(1.48E-5);
+        cfg.nu = cfg.units.nu_si_lu(1.48E-5);
         cfg.velocity_set = VelocitySet::D3Q19;
         cfg.mhd_lod_depth = 4;
-        cfg.run_steps = 1000;
+        cfg.run_steps = 30;
         // Extensions
         cfg.ext_volume_force = true;
         cfg.ext_magneto_hydro = true;
@@ -47,20 +48,20 @@ pub fn run_node() {
         cfg.graphics_config.camera_width = 1920;
         cfg.graphics_config.camera_height = 1080;
         cfg.graphics_config.streamline_every = 8;
-        cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::EDyn;
-        cfg.graphics_config.u_max = 100.0;
+        cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::U;
+        cfg.graphics_config.u_max = 0.4;
         cfg.graphics_config.streamline_mode = true;
         cfg.graphics_config.axes_mode = true;
         // Animation
         cfg.graphics_config.render_intervals = true;
         let mut f: Vec<graphics::Keyframe> = vec![];
-        for i in 0..100 {
+        for i in 0..800 {
             f.push(graphics::Keyframe {
                 time: i * 5,
                 repeat: false,
-                cam_rot_x: 50.0 + (i * 5) as f32,
+                cam_rot_x: 50.0 + (i as f32 * 0.5),
                 cam_rot_y: -20.0,
-                cam_zoom: 2.0,
+                cam_zoom: 0.4,
                 ..graphics::Keyframe::default()
             })
         }
@@ -85,15 +86,15 @@ pub fn run_node() {
 
     let mut domain = node_domain(&mut cfg, rank as u32); // Build domain for node
     println!("Build domain at Node {}", rank);
-    if rank == 0 {
-        let cpc = 0.002;
-        let charge: Vec<f32> = vec![cpc; 128 * 128 * 32];
-        bwrite!(domain.q.as_ref().expect("q"), charge);
-    }
+    //if rank == 0 {
+    //    let cpc = 0.002;
+    //    let charge: Vec<f32> = vec![cpc; 128 * 128 * 32];
+    //    bwrite!(domain.q.as_ref().expect("q"), charge);
+    //}
     world.barrier();
-    rprintln!("Beginning execution\n", world);
-    //domain.node_taylor_green(1.0, &world);
-    domain.node_setup_velocity_field((0.1, 0.01, 0.0), 1.0);
+    rprintln("Beginning execution\n", &world);
+    domain.node_taylor_green(1.0, &world);
+    //domain.node_setup_velocity_field((0.1, 0.01, 0.0), 1.0);
     domain.node_initialize(&world);
 
     // Set correct camera parameters
@@ -105,6 +106,7 @@ pub fn run_node() {
     bwrite!(domain.graphics.as_ref().expect("graphics").camera_params, params);
 
     // Run for the configured step amount
+    let now = std::time::Instant::now();
     for s in 0..cfg.run_steps {
         // Run simulation time step
         domain.node_do_time_step(&world);
@@ -113,6 +115,7 @@ pub fn run_node() {
             domain.node_render_keyframes(s, &world);
         }
     }
+    rprintln(&format!("{} steps took {}s", cfg.run_steps, now.elapsed().as_secs()), &world);
 }
 
 /// Initialize an `LbmDomain` for a compute node
@@ -131,15 +134,29 @@ fn node_domain(cfg: &mut LbmConfig, rank: u32) -> LbmDomain {
     let x = (rank % (cfg.d_x * cfg.d_y)) % cfg.d_x; // Get domain coordinates
     let y = (rank % (cfg.d_x * cfg.d_y)) / cfg.d_x;
     let z =  rank / (cfg.d_x * cfg.d_y);
+    
+    let devices = device_vec!();
+    let dev;
+    if devices.is_empty() {
+        println!("No OpenCL Device detected. Aborting...");
+        std::process::exit(1);
+    } else if devices.len() == 1 {
+        dev = default_device!();
+        println!("1 OpenCL device detected on process {}. Using device 1: {}.", rank, dev.name().expect("name"));
+    } else {
+        dev = devices[rank as usize % devices.len()];
+        println!("{} OpenCL devices detected on process {}. Using device {}: {}", devices.len(), rank, rank % devices.len() as u32, dev.name().expect("name"));
+    }
 
-    LbmDomain::new( &cfg, default_device!(), x, y, z, rank) // Initialize and return domain
+    //println!("Using device {} for node {}.", default_device!().name().expect("name"), rank);
+    LbmDomain::new( &cfg, dev, x, y, z, rank) // Initialize and return domain
 }
 
 // Additional functionality needed for multi-node exectution
 impl LbmDomain {
     /// Readies the LBM Simulation to be run.
     /// Executes `kernel_initialize` Kernels for the domain and communicates between nodes
-    pub fn node_initialize(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    pub fn node_initialize(&mut self, world: &SimpleCommunicator) {
         // the communicate calls at initialization need an odd time step
         self.t = 1;
         self.node_communicate_rho_u_flags(world);
@@ -158,7 +175,7 @@ impl LbmDomain {
     /// Executes one LBM time step.
     /// Executes `kernel_stream_collide` Kernels for the node `LbmDomain` and exchanges domain transfer buffers.
     /// Updates the dynamic E and B fields.
-    fn node_do_time_step(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    fn node_do_time_step(&mut self, world: &SimpleCommunicator) {
         if self.cfg.ext_magneto_hydro {
             self.enqueue_clear_qu_lod().unwrap(); // Ready LOD Buffer
         }
@@ -183,7 +200,7 @@ impl LbmDomain {
     // Domain communication
     /// Communicate a field across domain barriers
     #[rustfmt::skip]
-    pub fn node_communicate_field(&mut self, field: TransferField, bytes_per_cell: usize, world: &mpi::topology::SimpleCommunicator) {
+    pub fn node_communicate_field(&mut self, field: TransferField, bytes_per_cell: usize, world: &SimpleCommunicator) {
         world.barrier(); // Get all nodes ready for transfer
         let d_x = self.cfg.d_x as usize;
         let d_y = self.cfg.d_y as usize;
@@ -222,7 +239,7 @@ impl LbmDomain {
 
     /// Communicate Fi across domain boundaries
     #[rustfmt::skip]
-    fn node_communicate_fi(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    fn node_communicate_fi(&mut self, world: &SimpleCommunicator) {
         let bytes_per_cell =
             self.cfg.float_type.size_of() * self.cfg.velocity_set.get_transfers(); // FP type size * transfers.
         self.node_communicate_field(TransferField::Fi, bytes_per_cell, world);
@@ -230,17 +247,17 @@ impl LbmDomain {
     
     /// Communicate rho, u and flags across domain boundaries (needed for graphics)
     #[rustfmt::skip]
-    fn node_communicate_rho_u_flags(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    fn node_communicate_rho_u_flags(&mut self, world: &SimpleCommunicator) {
         self.node_communicate_field(TransferField::RhoUFlags, 17, world);
     }
 
     /// Communicate Qi across domain boundaries (needed for magnetohydrodynamics)
-    fn node_communicate_qi(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    fn node_communicate_qi(&mut self, world: &SimpleCommunicator) {
         let bytes_per_cell = self.cfg.float_type.size_of() * 1; // FP type size * transfers. The fixed D3Q7 lattice has 1 transfer
         self.node_communicate_field(TransferField::Qi, bytes_per_cell, world);
     }
 
-    fn node_communicate_qu_lods(&mut self, world: &mpi::topology::SimpleCommunicator) {
+    fn node_communicate_qu_lods(&mut self, world: &SimpleCommunicator) {
         let d_n = world.size(); // Number of nodes/domains
         let dim = self.cfg.velocity_set.get_set_values().0 as u32;
         let d = world.rank();
@@ -294,7 +311,7 @@ impl LbmDomain {
     /// Draw one frame of the simulation.
     /// Each node/domain renders its own frame. Frames are transmitted to the root node, stitched together and saved.
     #[rustfmt::skip]
-    fn node_draw_frame(&self, name: String, step: u64, world: &mpi::topology::SimpleCommunicator) {
+    fn node_draw_frame(&self, name: String, step: u64, world: &SimpleCommunicator) {
         let width = self.cfg.graphics_config.camera_width;
         let height = self.cfg.graphics_config.camera_height;
         let pixel_n = (width * height) as usize;
@@ -316,7 +333,7 @@ impl LbmDomain {
             world.process_at_rank(0).gather_into_root(&bitmap, &mut bitmaps[..]); // Receive buffers
             world.process_at_rank(0).gather_into_root(&zbuffer, &mut zbuffers[..]);
 
-            thread::spawn(move || { // Generating images needs own thread for performance reasons
+            std::thread::spawn(move || { // Generating images needs own thread for performance reasons
                 for d in 1..d_n as usize { // Assemble image from domain pixels
                     let offset = pixel_n * d;
                     for i in 0..pixel_n {
@@ -336,13 +353,13 @@ impl LbmDomain {
                     save_buffer.push((color & 0xFF) as u8);
                 }
                 let imgbuffer: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(width, height, save_buffer).unwrap();
-                imgbuffer.save(format!(r"{}/../out/{}_{}.png", std::env::current_exe().unwrap().display(), name, step)).unwrap();
-                
+                //imgbuffer.save(format!(r"{}/../out/{}_{}.png", std::env::current_exe().unwrap().display(), name, step)).unwrap();
+                imgbuffer.save(format!(r"out/step_{}.png", step)).unwrap();
             });
         }
     }
 
-    fn node_render_keyframes(&self, step: u64, world: &mpi::topology::SimpleCommunicator) {
+    fn node_render_keyframes(&self, step: u64, world: &SimpleCommunicator) {
         if self.cfg.graphics_config.render_intervals {
             for (c, frame) in self.cfg.graphics_config.keyframes.iter().enumerate() {
                 if (frame.time % (step+1) == 0 && frame.repeat) || (frame.time == step && !frame.repeat) {
@@ -360,7 +377,7 @@ impl LbmDomain {
 
     #[rustfmt::skip]
     #[allow(dead_code)]
-    fn node_taylor_green(&mut self, periodicity: f32, world: &mpi::topology::SimpleCommunicator) {
+    fn node_taylor_green(&mut self, periodicity: f32, world: &SimpleCommunicator) {
         let nx = self.cfg.n_x;
         let ny = self.cfg.n_y;
         let nz = self.cfg.n_z;
@@ -463,11 +480,8 @@ impl LbmDomain {
 }
 
 /// Print only if root process. Needs access to comm-world 
-#[macro_export]
-macro_rules! rprintln {
-    ($str:expr, $world:expr) => {
-        if $world.rank() == 0 {
-            println!($str);
-        }
-    };
+fn rprintln(str: &str, world: &SimpleCommunicator) {
+    if world.rank() == 0 {
+        println!("{str}");
+    }
 }

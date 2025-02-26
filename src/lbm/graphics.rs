@@ -7,9 +7,8 @@
 use std::{f32::consts::PI, sync::mpsc::Sender, thread};
 use image::{ImageBuffer, Rgb};
 use ocl::{Buffer, Kernel, Program, Queue};
-
-use crate::*;
-use crate::lbm::graphics;
+use ocl_macros::*;
+use crate::{lbm::*, SimState};
 
 
 /// The vector field used in visualizations like field and streamline
@@ -17,8 +16,8 @@ use crate::lbm::graphics;
 #[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum VecVisMode {
     U,
-    E,
-    B,
+    EStat,
+    BStat,
     EDyn,
     BDyn,
 }
@@ -151,16 +150,21 @@ impl Graphics {
         let height = lbm_config.graphics_config.camera_height;
         let n = n_d.0 as u64 * n_d.1 as u64 * n_d.2 as u64;
 
+        print!("    Allocating Graphics Buffers");
+        let mut now = std::time::Instant::now();
         let bitmap =        buffer!(queue, [width, height], 0i32);
         let zbuffer =       buffer!(queue, [width, height], 0i32);
         let camera_params = buffer!(queue, 15, 0.0f32);
         bwrite!(camera_params, new_camera_params());
+        println!(" - Done ({}ms)", now.elapsed().as_millis()); // Allocating Graphics Buffers
 
         let sln = match lbm_config.velocity_set {
             VelocitySet::D2Q9 => (lbm_config.n_x / lbm_config.graphics_config.streamline_every) as u64 * (lbm_config.n_y / lbm_config.graphics_config.streamline_every) as u64,
             _ => (lbm_config.n_x / lbm_config.graphics_config.streamline_every) as u64 * (lbm_config.n_y / lbm_config.graphics_config.streamline_every) as u64 * (lbm_config.n_z / lbm_config.graphics_config.streamline_every) as u64,
         };
 
+        print!("    Initializing Graphics Kernels");
+        now = std::time::Instant::now();
         // Clear kernel
         let kernel_clear = kernel!(program, queue, "graphics_clear", bitmap.len(), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
 
@@ -172,6 +176,7 @@ impl Graphics {
         let kernel_graphics_q          = kernel!(program, queue, "graphics_q",            [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_q_field    = kernel!(program, queue, "graphics_q_field",      [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        println!(" - Done ({}ms)", now.elapsed().as_millis()); // Initializing Graphics Kernels
 
         Graphics {
             kernel_clear,
@@ -199,7 +204,7 @@ impl Graphics {
 }
 
 // draw_frame function for Lbm
-impl Lbm {
+impl super::Lbm {
     #[allow(unused_variables)]
     pub fn draw_frame(&self, save: bool, name: String, sim_tx: Sender<SimState>, i: &u32) {
         let width = self.config.graphics_config.camera_width;
@@ -311,7 +316,7 @@ impl Lbm {
 
 // enqueue_draw_frame function for LbmDomain
 #[rustfmt::skip]
-impl LbmDomain {
+impl domain::LbmDomain {
     pub fn enqueue_draw_frame(&self) {
         let graphics = self
             .graphics
@@ -324,11 +329,11 @@ impl LbmDomain {
                 graphics.kernel_graphics_axes.enq().unwrap();
             }
             if graphics.streamline_mode {
-                // Streamlines can show velocity, dynamic and static E and B field
+                // Streamlines can show velocity, dynamic and static EStat and BStat field
                 graphics.kernel_graphics_streamline.set_arg("u", match graphics.vec_vis_mode {
                     VecVisMode::U => &self.u,
-                    VecVisMode::E => self.e.as_ref().expect("E buffer used but not initialized"),
-                    VecVisMode::B => self.b.as_ref().expect("B buffer used but not initialized"),
+                    VecVisMode::EStat => self.e_stat.as_ref().expect("E_stat buffer used but not initialized"),
+                    VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
                 }).unwrap();
@@ -337,8 +342,8 @@ impl LbmDomain {
             if graphics.field_mode {
                 graphics.kernel_graphics_field.set_arg("u", match graphics.vec_vis_mode {
                     VecVisMode::U => &self.u,
-                    VecVisMode::E => self.e.as_ref().expect("E buffer used but not initialized"),
-                    VecVisMode::B => self.b.as_ref().expect("B buffer used but not initialized"),
+                    VecVisMode::EStat => self.e_stat.as_ref().expect("E_stat buffer used but not initialized"),
+                    VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
                 }).unwrap();
@@ -358,12 +363,6 @@ impl LbmDomain {
             }
         }
     }
-}
-
-#[derive(Default)]
-pub struct Camera {
-    pub width: u32,
-    pub height: u32,
 }
 
 #[rustfmt::skip]

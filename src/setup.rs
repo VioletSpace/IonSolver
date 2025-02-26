@@ -20,13 +20,12 @@ use crate::*;
 ///
 /// Run `your_lbm.initialize()` and return it with the config.
 pub fn setup() -> Lbm {
-    /*
+    
     let mut cfg = LbmConfig::new();
-    cfg.n_x = 256;
-    cfg.n_y = 256;
-    cfg.n_z = 256;
-    cfg.d_y = 1;
-    cfg.nu = cfg.units.si_to_nu(0.05);
+    cfg.n_x = 416;
+    cfg.n_y = 416;
+    cfg.n_z = 416;
+    cfg.nu = cfg.units.nu_si_lu(0.05);
     cfg.velocity_set = VelocitySet::D3Q19;
     cfg.run_steps = 1000;
     cfg.ext_volume_force = true;
@@ -68,15 +67,23 @@ pub fn setup() -> Lbm {
     //lbm.setup_velocity_field((0.01, 0.001, 0.0), 1.0);
     lbm.set_taylor_green(1);
 
-    lbm
-    */
+    //lbm
+    
+    
     //setup_domain_test()
-    setup_bfield_spin()
+    //setup_bfield_spin()
     //file::write(&setup_bfield_spin(), "./testfile.ion");
     //setup_from_file("./testfile.ion")
-    //setup_taylor_green()
+    //let mut lbm = setup_taylor_green();
     //setup_verification()
     //setup_field_vis()
+    //setup_ecr_test()
+
+    let now = std::time::Instant::now();
+    lbm.run(10);
+    println!("10 time steps with 416^3 cells took: {}", now.elapsed().as_millis());
+    lbm
+    
 }
 
 #[allow(unused)]
@@ -107,10 +114,10 @@ pub fn setup_from_file(path: &str) -> Lbm {
 #[allow(unused)]
 fn setup_taylor_green() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.n_x = 256;
-    lbm_config.n_y = 256;
-    lbm_config.n_z = 256;
-    lbm_config.nu = lbm_config.units.si_to_nu(0.1);
+    lbm_config.n_x = 428;
+    lbm_config.n_y = 428;
+    lbm_config.n_z = 428;
+    lbm_config.nu = lbm_config.units.nu_si_lu(0.1);
     lbm_config.velocity_set = VelocitySet::D3Q19;
     // Graphics
     lbm_config.graphics_config.graphics_active = true;
@@ -130,14 +137,14 @@ fn setup_taylor_green() -> Lbm {
 #[allow(unused)]
 fn setup_domain_test() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 10.0, 1.2250, 1.0);
+    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 1.0, 10.0, 1.2250, 1.0, 1.0);
     lbm_config.n_x = 256;
     lbm_config.n_y = 256;
     lbm_config.n_z = 256;
     lbm_config.d_z = 2; // Two domains on z-axis (128 cells long each)
     lbm_config.velocity_set = VelocitySet::D3Q19;
 
-    lbm_config.nu = lbm_config.units.si_to_nu(0.00148);
+    lbm_config.nu = lbm_config.units.nu_si_lu(0.00148);
 
     // Graphics
     lbm_config.graphics_config.graphics_active = true;
@@ -157,14 +164,14 @@ fn setup_domain_test() -> Lbm {
 #[allow(unused)]
 fn setup_bfield_spin() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001);
+    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
     lbm_config.units.print();
     lbm_config.n_x = 128;
     lbm_config.n_y = 128;
     lbm_config.n_z = 256;
     lbm_config.d_z = 2;
-    lbm_config.nu = lbm_config.units.si_to_nu(1.48E-5);
-    println!("    nu in LU is: {}", lbm_config.units.si_to_nu(1.48E-3));
+    lbm_config.nu = lbm_config.units.nu_si_lu(1.48E-5);
+    println!("    nu in LU is: {}", lbm_config.units.nu_si_lu(1.48E-3));
     lbm_config.velocity_set = VelocitySet::D3Q19;
     lbm_config.mhd_lod_depth = 4;
     // Extensions
@@ -218,13 +225,13 @@ fn setup_bfield_spin() -> Lbm {
 #[allow(unused)]
 fn setup_verification() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.units.set(1.0, 1.0, 1.0, 1.0, 0.5, 1.0, 1.0, 10.0);
+    lbm_config.units.set(1.0, 1.0, 1.0, 1.0, 1.0, 0.5, 1.0, 1.0, 10.0, 1.0);
     lbm_config.units.print();
     lbm_config.n_x = 128;
     lbm_config.n_y = 128;
     lbm_config.n_z = 128;
-    lbm_config.nu = lbm_config.units.si_to_nu(1.48E-5);
-    println!("    nu in LU is: {}", lbm_config.units.si_to_nu(1.48E-3));
+    lbm_config.nu = lbm_config.units.nu_si_lu(1.48E-5);
+    println!("    nu in LU is: {}", lbm_config.units.nu_si_lu(1.48E-3));
     lbm_config.velocity_set = VelocitySet::D3Q19;
     lbm_config.mhd_lod_depth = 4;
     // Extensions
@@ -236,7 +243,7 @@ fn setup_verification() -> Lbm {
     lbm_config.graphics_config.camera_width = 1920;
     lbm_config.graphics_config.camera_height = 1080;
     lbm_config.graphics_config.streamline_every = 8;
-    lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::B;
+    lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
     lbm_config.graphics_config.streamline_mode = true;
     lbm_config.graphics_config.axes_mode = true;
     lbm_config.graphics_config.q_mode = true;
@@ -259,11 +266,11 @@ fn setup_verification() -> Lbm {
 #[allow(unused)]
 fn setup_field_vis() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001);
+    lbm_config.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
     lbm_config.n_x = 256;
     lbm_config.n_y = 256;
     lbm_config.n_z = 256;
-    lbm_config.nu = lbm_config.units.si_to_nu(1.48E-5);
+    lbm_config.nu = lbm_config.units.nu_si_lu(1.48E-5);
     lbm_config.velocity_set = VelocitySet::D3Q19;
     lbm_config.mhd_lod_depth = 4;
     // Extensions
@@ -275,7 +282,7 @@ fn setup_field_vis() -> Lbm {
     lbm_config.graphics_config.camera_width = 800;
     lbm_config.graphics_config.camera_height = 540;
     lbm_config.graphics_config.streamline_every = 16;
-    lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::B;
+    lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
     lbm_config.graphics_config.u_max = 0.000000002;
     lbm_config.graphics_config.streamline_mode = true;
 
@@ -288,6 +295,24 @@ fn setup_field_vis() -> Lbm {
     }
     lbm.magnets = Some(vec_m);
     precompute::precompute_B(&lbm);
+
+    lbm
+}
+
+#[allow(unused)]
+fn setup_ecr_test() -> Lbm {
+    let mut lbm_config = LbmConfig::new();
+    lbm_config.n_x = 1;
+    lbm_config.n_y = 1;
+    lbm_config.n_z = 1;
+    lbm_config.velocity_set = VelocitySet::D3Q19;
+    lbm_config.ext_volume_force = true;
+    lbm_config.ext_magneto_hydro = true;
+    lbm_config.ext_subgrid_ecr = true;
+    lbm_config.ecr_freq = 0.1f32;
+    lbm_config.ecr_field_strength = 1.0f32;
+
+    let mut lbm = Lbm::new(lbm_config);
 
     lbm
 }
