@@ -813,7 +813,8 @@ kernel void graphics_q(const global uchar* flags, const global float* u, const g
 	}
 }
 
-kernel void graphics_ecrc(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer) {
+/*
+kernel void graphics_ecrc(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer, const float ecrf) {
 	const uint n = get_global_id(0);
 	const uint3 xyz = coordinates(n);
 	if(xyz.x>=DEF_NX-1u||xyz.y>=DEF_NY-1u||xyz.z>=DEF_NZ-1u||is_halo_q(xyz)) return; // don't execute graphics_q_field() on marching-cubes halo
@@ -903,7 +904,7 @@ kernel void graphics_ecrc(const global uchar* flags, const global float* u, cons
 		}
 		draw_triangle_interpolated(p+p0, p+p1, p+p2, c0, c1, c2, camera_cache, bitmap, zbuffer); // draw triangle with interpolated colors
 	}
-}
+}/* */
 
 kernel void graphics_axes(const global float* camera, global int* bitmap, global int* zbuffer) {
 	const int c_r = 0xFF0000;

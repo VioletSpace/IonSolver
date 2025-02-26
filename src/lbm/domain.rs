@@ -123,7 +123,13 @@ impl LbmDomain {
         let queue = Queue::new(&context, device, None).unwrap();
         print!("    Compiling Program");
         let mut now = std::time::Instant::now();
-        let program = Program::builder().devices(device).src(&ocl_code).build(&context).unwrap();
+        let program = match Program::builder().devices(device).src(&ocl_code).build(&context) {
+            Ok(pr) => pr,
+            Err(err) => { match err { ocl::Error::OclCore(error) => { match error { ocl::OclCoreError::ProgramBuild(pbe) => {
+                println!("{}", pbe.to_string());
+                panic!("Kernel program build error in LbmDomain::new(). Aborting."); }, _ => todo!(), } }, _ => todo!(),  } 
+            },
+        };
         println!(" - Done ({}ms)", now.elapsed().as_millis()); // Compiling Program
 
 
