@@ -25,6 +25,7 @@ use crate::opencl;
 use {domain::LbmDomain, graphics::GraphicsConfig};
 pub use types::*;
 pub use units::Units;
+use crate::mesh::Mesh;
 
 // Helper Functions
 /// Get `x, y, z` coordinates from 1D index `n` and side lengths `n_x` and `n_y`.
@@ -153,6 +154,8 @@ pub struct Lbm {
     pub domains: Vec<LbmDomain>,
     /// A copy of the [`LbmConfig`] used to initialize the simulation.
     pub config: LbmConfig,
+    /// Imported meshes
+    pub meshes: Vec<Mesh>,
     /// A vector of Charges positioned in the simulation via a 1D index. Used in static field computation. 
     pub charges: Option<Vec<(u64, f32)>>,
     /// A vector of Magnets positioned in the simulation via a 1D index. Used in static field computation. 
@@ -211,6 +214,7 @@ impl Lbm {
         Lbm {
             domains: lbm_domains,
             config: lbm_config,
+            meshes: vec![],
             charges: None,
             magnets: None,
             charges_var: None,

@@ -415,8 +415,17 @@ impl ByteStream {
     pub fn next_char(&mut self) -> char {
         self.next_u8() as char
     }
+    ///Skip n bytes from the stream
+    pub fn skip_bytes(&mut self, n_bytes: usize) {
+        self.pos += n_bytes;
+    }
 
     pub fn at_end(&self) -> bool {
         self.pos == self.buffer.len()
+    }
+
+    /// The total lenght of the stream
+    pub fn length(&self) -> usize {
+        self.buffer.len()
     }
 }

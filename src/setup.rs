@@ -22,15 +22,11 @@ use crate::*;
 pub fn setup() -> Lbm {
     
     let mut cfg = LbmConfig::new();
-    cfg.n_x = 416;
-    cfg.n_y = 416;
-    cfg.n_z = 416;
+    cfg.n_x = 128;
+    cfg.n_y = 256;
+    cfg.n_z = 128;
     cfg.nu = cfg.units.nu_si_lu(0.05);
     cfg.velocity_set = VelocitySet::D3Q19;
-    cfg.run_steps = 1000;
-    cfg.ext_volume_force = true;
-    cfg.ext_magneto_hydro = true;
-    cfg.mhd_lod_depth = 4;
     // Graphics
     cfg.graphics_config.graphics_active = true;
     cfg.graphics_config.streamline_every = 8;
@@ -39,33 +35,11 @@ pub fn setup() -> Lbm {
     cfg.graphics_config.axes_mode = true;
     //cfg.graphics_config.q_mode = true;
     cfg.graphics_config.q_min = 0.00001;
-    // Animation
-    //cfg.graphics_config.render_intervals = true;
-    //let mut f: Vec<graphics::Keyframe> = vec![];
-    //for i in 0..100 {
-    //    f.push(graphics::Keyframe {
-    //        time: i * 5,
-    //        repeat: false,
-    //        cam_rot_x: 50.0 + (i * 5) as f32,
-    //        cam_rot_y: -40.0,
-    //        cam_zoom: 2.0,
-    //        ..graphics::Keyframe::default()
-    //    })
-    //}
-    //cfg.graphics_config.keyframes = f;
-
-    //let cpc = 0.09;
-    //println!("Charge per cell: {}As", lbm_config.units.charge_to_si(cpc));
-    //let mut charge: Vec<f32> = vec![0.0; (lbm_config.n_x * lbm_config.n_y * lbm_config.n_z) as usize];
-    //for i in 0..lbm_config.n_x {
-    //    let n = i + (64 + 63 * lbm_config.n_y) * lbm_config.n_x;
-    //    charge[n as usize] = cpc;
-    //}
-
     let mut lbm = Lbm::new(cfg);
     //lbm.domains[0].q.as_ref().expect("msg").write(&charge).enq().unwrap();
     //lbm.setup_velocity_field((0.01, 0.001, 0.0), 1.0);
-    lbm.set_taylor_green(1);
+    //lbm.set_taylor_green(1);
+    lbm.import_mesh("stl/cow.stl", 0.0, 64.0, 128.0, 64.0, -30.0, 0.0, 0.0);
 
     //lbm
     
@@ -79,9 +53,9 @@ pub fn setup() -> Lbm {
     //setup_field_vis()
     //setup_ecr_test()
 
-    let now = std::time::Instant::now();
-    lbm.run(10);
-    println!("10 time steps with 416^3 cells took: {}", now.elapsed().as_millis());
+    //let now = std::time::Instant::now();
+    //lbm.run(10);
+    //println!("10 time steps with 416^3 cells took: {}", now.elapsed().as_millis());
     lbm
     
 }
