@@ -11,6 +11,7 @@ use std::{f32::consts::PI, fs, sync::mpsc, thread};
 mod file;
 mod info;
 mod lbm;
+mod mesh;
 mod opencl;
 mod setup;
 #[cfg(feature = "gui")]
