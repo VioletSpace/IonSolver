@@ -644,27 +644,17 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 
 
 		/* ------ LOD construction ------ */
-		#if DEF_LOD_DEPTH > 0 // Update LOD buffer
-			uint off = 0;
-			#if (DEF_DX>1 || DEF_DY>1 || DEF_DZ>1)  // Multiple Domains
-				for (uint d = 0; d<=DEF_LOD_DEPTH; d++) // Iterate over depth levels d and add values to LOD buffer
-			#else // Single Domain
-				const uint d = DEF_LOD_DEPTH;
+		#if DEF_LOD_DEPTH > 0 
+			uint off = 0; // Update LOD buffer
+			#if (DEF_DX>1 || DEF_DY>1 || DEF_DZ>1)  
+				for (uint d = 0; d<DEF_LOD_DEPTH; d++) { off += (1<<d*DEF_DIMENSIONS); } // Multiple Domains, set offset to lower details
 			#endif // Single Domain
-			{
-				const uint ind = (lod_index(n, d) + off) * 4;
-				const float ils = 1/lod_s(d); // factor for averaging accross LODs
-				atomic_add_f(&QU_lod[ind+0], rhon_q-rhon_e);
-				atomic_add_f(&QU_lod[ind+1], uxn * ils);
-				atomic_add_f(&QU_lod[ind+2], uyn * ils);
-				atomic_add_f(&QU_lod[ind+3], uzn * ils);
-				// offset to skip previous depths
-				#if defined(D2Q9)
-					off += (1<<d) * (1<<d); 
-				#else
-					off += (1<<d) * (1<<d) * (1<<d);
-				#endif
-			}
+			const uint ind = (lod_index(n, DEF_LOD_DEPTH) + off) * 4;
+			const float ils = 1.0f/lod_s(DEF_LOD_DEPTH); // factor for averaging accross LODs
+			atomic_add_f(&QU_lod[ind+0], rhon_q-rhon_e);
+			atomic_add_f(&QU_lod[ind+1], uxn * ils);
+			atomic_add_f(&QU_lod[ind+2], uyn * ils);
+			atomic_add_f(&QU_lod[ind+3], uzn * ils);
 		#endif
 	#endif// MAGNETO_HYDRO
 
@@ -849,6 +839,41 @@ __kernel void update_fields(const global fpxx* fi, global float* rho, global flo
 } // update_fields()
 
 #ifdef MAGNETO_HYDRO
+// Assemble lower-level lods from highest-level lods generated in stream_collide (part 1)
+// Call in range LOD_DEPTH-1 ..= 0
+__kernel void lod_part_2_gather(global float* lods, const uint depth) {
+    uint n = get_global_id(0);
+
+	const uint nd = (1<<depth); // n of lods on each axis for depth 
+	const uint t = n%(nd*nd);
+	const uint3 nlodcb = (uint3)(t%nd, t/nd, n/(nd*nd)) * 2; // new lod coords basis
+	
+	const uint nnd = (1<<(depth+1)); // n of lods on each axis for depth-1
+	uint off = 0; // offset for writing
+	for (uint d = 0; d<depth; d++) { off += (1<<d*3); }
+	uint j[8];
+	j[0] = off + (1<<(depth*3)) + nlodcb.x +     (nlodcb.y    ) * nnd + (nlodcb.z    ) * nnd * nnd;
+	j[1] = off + (1<<(depth*3)) + nlodcb.x + 1 + (nlodcb.y    ) * nnd + (nlodcb.z    ) * nnd * nnd;
+	j[2] = off + (1<<(depth*3)) + nlodcb.x + 1 + (nlodcb.y + 1) * nnd + (nlodcb.z    ) * nnd * nnd;
+	j[3] = off + (1<<(depth*3)) + nlodcb.x + 1 + (nlodcb.y + 1) * nnd + (nlodcb.z + 1) * nnd * nnd;
+	j[4] = off + (1<<(depth*3)) + nlodcb.x + 1 + (nlodcb.y    ) * nnd + (nlodcb.z + 1) * nnd * nnd;
+	j[5] = off + (1<<(depth*3)) + nlodcb.x +     (nlodcb.y + 1) * nnd + (nlodcb.z    ) * nnd * nnd;
+	j[6] = off + (1<<(depth*3)) + nlodcb.x +     (nlodcb.y + 1) * nnd + (nlodcb.z + 1) * nnd * nnd;
+	j[7] = off + (1<<(depth*3)) + nlodcb.x +     (nlodcb.y    ) * nnd + (nlodcb.z + 1) * nnd * nnd;
+	//if (n == 0) printf("%u\n", j[5]);
+	float qs = 0.0f, uxs = 0.0f, uys = 0.0f, uzs = 0.0f;
+	for (uint i = 0; i<8; i++) {
+		qs  += lods[j[i]*4+0];
+		uxs += lods[j[i]*4+1];
+		uys += lods[j[i]*4+2];
+		uzs += lods[j[i]*4+3];
+	}
+	lods[(off+n)*4+0] = qs;
+	lods[(off+n)*4+1] = uxs*0.125;
+	lods[(off+n)*4+2] = uys*0.125;
+	lods[(off+n)*4+3] = uzs*0.125;
+}
+
 __kernel void update_e_b_dynamic(const global float* E_stat, const global float* B_stat, global float* E_dyn, global float* B_dyn, const global float* Q, const global float* u, const global float* QU_lod, const global uchar* flags) {
 	const uint n = get_global_id(0); // n = x+(y+z*Ny)*Nx
 	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute update_e_b_dynamic() on halo
