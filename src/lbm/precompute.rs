@@ -34,7 +34,7 @@ pub fn constant_E(lbm: &Lbm, e: [f32; 3]) {
 /// Precomputes the electric field from a Vector of charges
 pub fn precompute_E(lbm: &Lbm) {
     if lbm.charges.is_none() {
-        println!("Cannot precompute E because there are no charges");
+        error!("Cannot precompute E because there are no charges");
         return;
     }
 
@@ -46,12 +46,13 @@ pub fn precompute_E(lbm: &Lbm) {
     let def_ke = lbm.config.units.ke_lu();
     let charges = lbm.charges.as_ref().unwrap();
 
-    println!(
+    info!(
         "Precomputing electric field for {} charges and {} cells. (This may take a while)",
         charges.len(),
         n
     );
 
+    let now = Instant::now();
     let charges_u32_3_pos: Vec<([u32; 3], f32)> = u32_3_pos(&charges, lengths);
     
     for d in 0..domain_numbers {
@@ -81,13 +82,15 @@ pub fn precompute_E(lbm: &Lbm) {
         // Write to device
         bwrite!(lbm.domains[d as usize].e_stat.as_ref().expect("e_stat"), e_field);
     }
+
+    info!("Precomputing electric field took {}ms", now.elapsed().as_millis());
 }
 
 #[allow(unused)] // Variables are mutated with deborrow
 /// Precomputes the variable electric field from a Vector of charges. Represented as a static field, as only vector length orthogonal to b is relevant
 pub fn precompute_E_var(lbm: &Lbm) {
     if lbm.charges_var.is_none() {
-        println!("Cannot precompute E because there are no charges");
+        error!("Cannot precompute E because there are no charges");
         return;
     }
 
@@ -99,12 +102,13 @@ pub fn precompute_E_var(lbm: &Lbm) {
     let def_ke = lbm.config.units.ke_lu();
     let charges = lbm.charges_var.as_ref().unwrap();
 
-    println!(
+    info!(
         "Precomputing variable electric field for {} charges and {} cells. (This may take a while)",
         charges.len(),
         n
     );
-
+    
+    let now = Instant::now();
     let charges_u32_3_pos: Vec<([u32; 3], f32)> = u32_3_pos(&charges, lengths);
     
     for d in 0..domain_numbers {
@@ -134,6 +138,8 @@ pub fn precompute_E_var(lbm: &Lbm) {
         // Write to device
         bwrite!(lbm.domains[d as usize].e_var.as_ref().expect("e_var"), e_field);
     }
+
+    info!("Precomputing variable electric field took {}ms", now.elapsed().as_millis());
 }
 
 /// Calculates electric field vector at a cell with index n
@@ -199,7 +205,7 @@ pub fn constant_B(lbm: &Lbm, b: [f32; 3]) {
 /// Precomputes the magnetic field from a Vector of magnetic scalar potentials
 pub fn precompute_B(lbm: &Lbm) {
     if lbm.magnets.is_none() {
-        print!("Cannot precompute B because there are no magnets");
+        error!("Cannot precompute B because there are no magnets");
         return;
     }
     let vec_psi = precompute::calculate_psi_field(lbm);
@@ -211,11 +217,12 @@ pub fn precompute_B(lbm: &Lbm) {
     let lengths: (u32, u32, u32) = (lbm.config.n_x, lbm.config.n_y, lbm.config.n_z);
     let def_mu0 = lbm.config.units.mu_0_lu();
 
-    println!(
+    info!(
         "Precomputing magnetic field for {} cells. (This may take a while)",
         n
     );
 
+    let now = Instant::now();
     for d in 0..domain_numbers {
         let mut b_field: Vec<f32> = vec![0.0; (dtotal * 3) as usize];
         let x = (d % (dx * dy)) % dx; // Current Domain coordinates
@@ -243,6 +250,8 @@ pub fn precompute_B(lbm: &Lbm) {
         // Write to device
         bwrite!(lbm.domains[d as usize].b_stat.as_ref().expect("b_stat"), b_field);
     }
+
+    info!("Precomputing magnetic field took {}ms", now.elapsed().as_millis());
 }
 
 #[allow(unused)]
@@ -274,12 +283,12 @@ pub fn calculate_psi_field(lbm: &Lbm) -> Vec<f32> {
     // 1 padding on each side
     let mut psi_field = vec![0.0f32; n as usize];
 
-    println!(
+    info!(
         "Precomputing magnetic scalar potential for {} magnets and {} cells. (This may take a while)",
         magnets.len(),
         n,
     );
-
+    let now = Instant::now();
     let magnets_u32_3_pos: Vec<([u32; 3], [f32; 3])> = u32_3_pos(&magnets, lengths);
 
     // get psi for all including padding
@@ -287,6 +296,7 @@ pub fn calculate_psi_field(lbm: &Lbm) -> Vec<f32> {
         *item = calculate_psi_at(i as u64, &magnets_u32_3_pos, lengths);
     });
 
+    info!("Precomputing magnetic scalar potential took {}ms", now.elapsed().as_millis());
     psi_field
 }
 
