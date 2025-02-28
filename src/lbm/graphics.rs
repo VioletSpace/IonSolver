@@ -4,8 +4,7 @@
 //! 
 //! This module contains functions to configure the included graphics engine and to render simulations.
 
-use std::{f32::consts::PI, sync::mpsc::Sender, thread};
-use image::{ImageBuffer, Rgb};
+use std::{f32::consts::PI, fs::File, io::BufWriter, sync::mpsc::Sender, thread};
 use ocl::{Buffer, Kernel, Program, Queue};
 use ocl_macros::*;
 use crate::{lbm::*, SimState};
@@ -286,9 +285,12 @@ impl super::Lbm {
             if save {
                 thread::spawn(move || {
                     //Saving needs own thread for performance reasons
-                    let imgbuffer: ImageBuffer<Rgb<u8>, _> =
-                        ImageBuffer::from_raw(width, height, save_buffer).unwrap();
-                    imgbuffer.save(format!(r"out/{}_{}.png", name, i)).unwrap();
+                    let file = File::create(format!(r"out/{}_{}.png", name, i)).unwrap();
+                    let ref mut w = BufWriter::new(file);
+                    let mut encoder = png::Encoder::new(w, width, height);
+                    encoder.set_color(png::ColorType::Rgb);
+                    let mut writer = encoder.write_header().unwrap();
+                    writer.write_image_data(&save_buffer).unwrap();
                 });
             }
         });

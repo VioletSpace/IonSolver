@@ -6,9 +6,8 @@
 //! ## MPI Error codes
 //! - **100**: Incompatible domain number and number of execution nodes
 
-use std::{cmp::max, f32::consts::PI};
+use std::{cmp::max, f32::consts::PI, fs::File, io::BufWriter};
 
-use image::{ImageBuffer, Rgb};
 use mpi::{datatype::PartitionMut, point_to_point, topology::SimpleCommunicator, traits::*, Count};
 use ocl_macros::*;
 
@@ -352,9 +351,12 @@ impl LbmDomain {
                     save_buffer.push(((color >> 8) & 0xFF) as u8);
                     save_buffer.push((color & 0xFF) as u8);
                 }
-                let imgbuffer: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(width, height, save_buffer).unwrap();
-                //imgbuffer.save(format!(r"{}/../out/{}_{}.png", std::env::current_exe().unwrap().display(), name, step)).unwrap();
-                imgbuffer.save(format!(r"out/step_{}.png", step)).unwrap();
+                let file = File::create(format!(r"out/step_{}.png", step)).unwrap();
+                let ref mut w = BufWriter::new(file);
+                let mut encoder = png::Encoder::new(w, width, height);
+                encoder.set_color(png::ColorType::Rgb);
+                let mut writer = encoder.write_header().unwrap();
+                writer.write_image_data(&save_buffer).unwrap();
             });
         }
     }
