@@ -4,6 +4,7 @@
 
 #![allow(non_snake_case)]
 extern crate ocl;
+use log::{error, info};
 use ocl_macros::*;
 use std::time::{Duration, Instant};
 use std::{f32::consts::PI, fs, sync::mpsc, thread};
@@ -50,6 +51,14 @@ pub struct SimControlTx {
 }
 
 fn main() {
+    env_logger::builder()
+        .filter(None, log::LevelFilter::Info)
+        .target(env_logger::Target::Stdout)
+        .format_module_path(false)
+        .format_file(false)
+        .format_target(false)
+        .init();
+
     #[cfg(feature = "multi-node")]
     multi_node::run_node();
     #[cfg(not(feature = "multi-node"))]
@@ -119,7 +128,7 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
     if state.save_img && state.clear_images {
         match fs::remove_dir_all("out") {
             Ok(_) => (),
-            Err(_) => println!("Did not find out folder. Creating it."),
+            Err(_) => error!("Did not find output folder; Creating it."),
         }
         fs::create_dir("out").unwrap();
     }
@@ -141,7 +150,7 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
             loop {
                 let now = Instant::now();
                 if !state.active {
-                    println!("Exiting Graphics Loop");
+                    info!("Exiting graphics loop.");
                     break;
                 }
 
@@ -227,7 +236,7 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
             if state.save_file {
                 match file::write(&lbm, state.file_name.as_str()) {
                     Ok(_) => {},
-                    Err(msg) => {println!("ERROR: Could not write file \"{}\"!\nReason: {}", state.file_name.as_str(), msg)},
+                    Err(msg) => {error!("Could not write file \"{}\"!\nReason: {}", state.file_name.as_str(), msg)},
                 }
                 state.save_file = false;
             }
@@ -251,13 +260,13 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
                         lbm = new_lbm;
                         lbm.initialize();
                     },
-                    Err(msg) => { println!("ERROR: Could not read file \"{}\"!\nReason: {}", state.file_name.as_str(), msg)},
+                    Err(msg) => { error!("Could not read file \"{}\"!\nReason: {}", state.file_name.as_str(), msg)},
                 }
                 state.load_file = false;
             }
         }
         if !state.active {
-            println!("\nExiting Simulation Loop");
+            info!("Exiting Simulation Loop");
             break;
         }
         let recieve_result = ctrl_rx.try_recv();

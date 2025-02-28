@@ -23,6 +23,7 @@ mod types;
 
 use crate::opencl;
 use {domain::LbmDomain, graphics::GraphicsConfig};
+use log::{info, warn};
 pub use types::*;
 pub use units::Units;
 use crate::mesh::Mesh;
@@ -174,8 +175,8 @@ impl Lbm {
         let n_d_y: u32 = (lbm_config.n_y / lbm_config.d_y) * lbm_config.d_y;
         let n_d_z: u32 = (lbm_config.n_z / lbm_config.d_z) * lbm_config.d_z;
         if n_d_x != lbm_config.n_x || n_d_y != lbm_config.n_y || n_d_z != lbm_config.n_z {
-            println!(
-                "Warning: Resolution {}, {}, {} not divisible by Domains: Overiding resolution.",
+            warn!(
+                "Resolution {}, {}, {} not divisible by Domains: Overiding resolution.",
                 lbm_config.n_x, lbm_config.n_y, lbm_config.n_z
             )
         }
@@ -191,15 +192,11 @@ impl Lbm {
 
         let mut lbm_domains: Vec<LbmDomain> = Vec::new();
         for d in 0..domain_numbers {
-            println!("Initializing domain {}/{}", d + 1, domain_numbers);
+            info!("Initializing domain {}/{}", d + 1, domain_numbers);
             let x = (d % (lbm_config.d_x * lbm_config.d_y)) % lbm_config.d_x;
             let y = (d % (lbm_config.d_x * lbm_config.d_y)) / lbm_config.d_x;
             let z = d / (lbm_config.d_x * lbm_config.d_y);
-            println!(
-                "    Using \"{}\" for domain {}",
-                device_infos[d as usize].name().unwrap(),
-                d + 1
-            );
+            info!("Using \"{}\" for domain {}", device_infos[d as usize].name().unwrap(), d + 1);
             lbm_domains.push(LbmDomain::new(
                 &lbm_config,
                 device_infos[d as usize],
@@ -209,7 +206,7 @@ impl Lbm {
                 d,
             ))
         }
-        println!("All domains initialized.\n");
+        info!("All domains initialized.\n");
 
         Lbm {
             domains: lbm_domains,

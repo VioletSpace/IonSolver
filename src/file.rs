@@ -3,13 +3,14 @@
 //! Different file operations used in IonSolver. Include simulation and config saving and loading.
 
 use std::{fs::File, io::Write};
+use log::info;
 use ocl_macros::{bread, bwrite};
 
 use crate::{Lbm, LbmConfig, VelocitySet, RelaxationTime, FloatType};
 
 /// Read a saved simulation file and return a readied Lbm struct
 pub fn read<P: AsRef<std::path::Path> + std::fmt::Display>(path: P, config: &mut LbmConfig) -> Result<Lbm, String> {
-    println!("\nReading simulation state from \"{}\"", path);
+    info!("\nReading simulation state from \"{}\"", path);
     let buffer: Vec<u8> = match std::fs::read(path) {
         Ok(vec) => vec,
         Err(_) => { return Err("Could not find file.".to_owned())},
@@ -19,7 +20,7 @@ pub fn read<P: AsRef<std::path::Path> + std::fmt::Display>(path: P, config: &mut
 
 /// Write the provided simulation as a file 
 pub fn write<P: AsRef<std::path::Path> + std::fmt::Display>(lbm: &Lbm, path: P) -> Result<(), String> {
-    println!("\nWriting simulation state to \"{}\"", path);
+    info!("\nWriting simulation state to \"{}\"", path);
     let buffer = encode(lbm);
     match std::fs::write(path, buffer) {
         Ok(_) => { Ok(()) },
@@ -307,7 +308,7 @@ fn encode(lbm: &Lbm) -> Vec<u8> {
 
 #[allow(dead_code)]
 pub fn read_config<P: AsRef<std::path::Path> + std::fmt::Display>(path: P) -> Result<LbmConfig, String> {
-    println!("\nReading LbmConfig from \"{}\"", path);
+    info!("\nReading LbmConfig from \"{}\"", path);
     let buffer: Vec<u8> = match std::fs::read(path) {
         Ok(vec) => vec,
         Err(_) => { return Err("Could not find file.".to_owned())},
@@ -321,7 +322,7 @@ pub fn read_config<P: AsRef<std::path::Path> + std::fmt::Display>(path: P) -> Re
 
 #[allow(dead_code)]
 pub fn write_config<P: AsRef<std::path::Path> + std::fmt::Display>(path: P, cfg: &LbmConfig) -> Result<(), String> {
-    println!("\nWriting LbmConfig to \"{}\"", path);
+    info!("\nWriting LbmConfig to \"{}\"", path);
     let buffer: Vec<u8> = match serde_json::to_vec(cfg) {
         Ok(cfg) => cfg,
         Err(s) => { return Err(format!("Could not create file: {}", s));}

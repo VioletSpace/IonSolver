@@ -2,21 +2,22 @@
 //! 
 //! OpenCL helper functions using the ocl wrapper
 
+use log::{error, info};
 use ocl::Device;
 use ocl_macros::device_vec;
 
 pub fn device_selection(domains: u32) -> Vec<Device> {
     let devices = device_vec!();
     if devices.is_empty() {
-        println!("No OpenCL Device detected. Aborting...");
+        error!("No OpenCL Device detected. Aborting...");
         std::process::exit(1);
     } else if devices.len() == 1 {
-        println!("1 OpenCL device detected");
+        info!("1 OpenCL device detected");
     } else {
-        println!("{} OpenCL devices detected", devices.len());
+        info!("{} OpenCL devices detected", devices.len());
     }
     for dev in &devices {
-        println!("  - {}", dev.name().expect("Device should have name"))
+        info!("  - {}", dev.name().expect("Device should have name"))
     }
     let mut device_infos: Vec<Device> = vec![devices[0]; domains as usize]; // Is completely overwritten
     let mut device_type_ids: Vec<Vec<Device>> = vec![]; // Device auto-selection
@@ -53,7 +54,7 @@ pub fn device_selection(domains: u32) -> Vec<Device> {
         //    device_infos[d] = device_type_ids[best_j as usize][d];
         //}
     } else {
-        println!("Warning! Not enough devices of the same type available. Using single fastest device for all domains.");
+        error!("Warning! Not enough devices of the same type available. Using single fastest device for all domains.");
         for d in device_infos.iter_mut().take(domains as usize) {
             *d = get_device_with_most_flops();
         }

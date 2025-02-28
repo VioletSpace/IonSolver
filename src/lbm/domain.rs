@@ -5,6 +5,7 @@
 //! `LbmDomain` should not be initialized on it's own, but automatically through the `Lbm::new()` function when initializing a new [`Lbm`].
 //! This ensures all arguments are correctly set.
 
+use log::{error, info};
 use ocl::{Buffer, Context, Device, Kernel, Platform, Program, Queue};
 use std::cmp;
 use crate::lbm::*;
@@ -122,20 +123,20 @@ impl LbmDomain {
         let platform = Platform::default();
         let context = Context::builder().platform(platform).devices(device).build().unwrap();
         let queue = Queue::new(&context, device, None).unwrap();
-        print!("    Compiling Program");
+        info!("Compiling OpenCL code...");
         let mut now = std::time::Instant::now();
         let program = match Program::builder().devices(device).src(&ocl_code).build(&context) {
             Ok(pr) => pr,
             Err(err) => { match err { ocl::Error::OclCore(error) => { match error { ocl::OclCoreError::ProgramBuild(pbe) => {
-                println!("{}", pbe.to_string());
+                error!("{}", pbe.to_string());
                 panic!("Kernel program build error in LbmDomain::new(). Aborting."); }, _ => todo!(), } }, _ => todo!(),  } 
             },
         };
-        println!(" - Done ({}ms)", now.elapsed().as_millis()); // Compiling Program
+        info!("Compiled OpenCL code in {}ms", now.elapsed().as_millis()); // Compiling Program
 
 
         // Allocate Buffers
-        print!("    Allocating Buffers");
+        info!("Allocating buffers...");
         now = std::time::Instant::now();
         let fi: VariableFloatBuffer = match lbm_config.float_type {
             FloatType::FP32 => { VariableFloatBuffer::F32(buffer!(&queue,[n * velocity_set as u64],0.0f32)) } // Float Type F32
@@ -192,11 +193,11 @@ impl LbmDomain {
         } else { None };
         // Electron temperature field
         let et: Option<Buffer<f32>> = if lbm_config.ext_subgrid_ecr { Some(buffer!(&queue, [n], 0f32)) } else { None };
-        println!(" - Done ({}ms)", now.elapsed().as_millis()); // Allocating buffers
+        info!("Allocated buffers in {}ms", now.elapsed().as_millis()); // Allocating buffers
 
 
         // Initialize Kernels
-        print!("    Initializing Simulation Kernels");
+        info!("Initializing simulation kernels...");
         now = std::time::Instant::now();
         let mut initialize_builder = kernel_builder!(program, queue, "initialize", [n]);
         let mut stream_collide_builder = kernel_builder!(program, queue, "stream_collide", [n]);
@@ -224,6 +225,7 @@ impl LbmDomain {
         // Conditional arguments. Place at end of kernel functions
         if lbm_config.ext_force_field { kernel_args!(stream_collide_builder, ("F", f.as_ref().expect("F"))); }
         if lbm_config.ext_magneto_hydro {
+            info!("Initializing magnetohydrodynamics kernels...");
             kernel_args!(stream_collide_builder, ("E_dyn", e_dyn.as_ref().expect("e_dyn")), ("B_dyn", b_dyn.as_ref().expect("b_dyn")));
             kernel_args!(initialize_builder,     ("E", e_stat.as_ref().expect("e_stat")), ("B", b_stat.as_ref().expect("b_stat")), ("E_dyn", e_dyn.as_ref().expect("e_dyn")), ("B_dyn", b_dyn.as_ref().expect("b_dyn")));
             
@@ -267,12 +269,12 @@ impl LbmDomain {
         let kernel_stream_collide: Kernel = stream_collide_builder.build().unwrap();
         let kernel_initialize: Kernel = initialize_builder.build().unwrap();
         let kernel_update_fields: Kernel = update_fields_builder.build().unwrap();
-        println!(" - Done ({}ms)", now.elapsed().as_millis()); // Initializing Simulation Kernels
+        info!("Initialized kernels in {}ms", now.elapsed().as_millis()); // Initializing Simulation Kernels
 
 
         // Multi-Domain-Transfers:
         // Transfer buffer initializaton:
-        print!("    Initializing Transfer Buffers/Kernels");
+        info!("Initializing transfer buffers/kernels...");
         now = std::time::Instant::now();
         let mut a_max: usize = 0;
         if lbm_config.d_x > 1 { a_max = cmp::max(a_max, n_y as usize * n_z as usize); } // Ax
@@ -332,12 +334,12 @@ impl LbmDomain {
                 } else { None }, // Insert Qi
             ], // Qi gas charge advection ddfs
         ];
-        println!(" - Done ({}ms)", now.elapsed().as_millis());
+        info!("Initialized transfer buffers/kernels in {}ms", now.elapsed().as_millis());
 
 
         let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, (n_x, n_y, n_z))) } else { None };
         
-        println!("Domain {} ready.", i);
+        info!("Domain {} ready.", i);
 
         LbmDomain {
             queue,
