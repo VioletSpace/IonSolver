@@ -9,7 +9,7 @@
 
 IonSolver is a magnetohydrodynamic simulation software using an extended Lattice Boltzmann method implemented in Rust and OpenCL. The software features a rudimentary GUI and both a single-node and multi-node execution model. IonSolver uses the Lattice Boltzman method for the simulated fluids, initial kernel functions for the LBM where taken with permission from the software [FluidX3D](https://github.com/ProjectPhysX/FluidX3D) by Dr. Moritz Lehmann. To allow for simulations of all detail levels, this software can be compiled in single-node or multi-node mode. In single-node mode the simulation may be distributed over multiple OpenCL-capable compute devices (ideally GPUs) on a single compute node and in multi-node mode the simulation is distributed over multiple compute nodes that communicate over MPI. This makes it possible to run IonSolver efficiently on devices ranging from laptops to supercomputers. 
 
-This software was created as part of the Jugend Forscht competition 2024 and reached 4th place in the Physics category on the state level. It will continue to receive updates past the competition. 
+This software was created as part of the Jugend Forscht competition 2024 in the Physics category and reached 1th place in the regional and state level as well as 4th place on the national level. It will continue to receive updates past the competition. 
 
 ## Usage
 <img src="https://github.com/PipInSpace/IonSolver/blob/main/icons/Screenshot.png?raw=true">
