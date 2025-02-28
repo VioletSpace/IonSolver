@@ -267,6 +267,7 @@ impl Lbm {
         }
         self.communicate_fi();
         if self.config.ext_magneto_hydro {
+            if self.domains.len() > 1 { self.build_lods_part_2() };
             self.communicate_fqi();
             self.communicate_ei();
             self.communicate_qu_lods();
@@ -304,6 +305,13 @@ impl Lbm {
     fn update_e_b_dynamic(&self) {
         for d in 0..self.get_d_n() {
             self.domains[d].enqueue_update_e_b_dyn().unwrap();
+        }
+    }
+
+    /// Build lower detail LODs needed for other domains from highest-detail LODs generated in stream_collide
+    fn build_lods_part_2(&self) {
+        for d in 0..self.get_d_n() {
+            self.domains[d].enqueue_lod_part_2_gather().unwrap();
         }
     }
 

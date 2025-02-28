@@ -26,6 +26,7 @@ pub struct LbmDomain {
     pub transfer_kernels: [[Option<Kernel>; 2]; 4],
 
     kernel_update_e_b_dyn: Option<Kernel>, // Optional Kernels
+    kernel_lod_part_2_gather: Option<Kernel>,
     kernel_clear_qu_lod: Option<Kernel>,
 
     pub n_x: u32, // Domain size
@@ -195,6 +196,7 @@ impl LbmDomain {
         let mut stream_collide_builder = kernel_builder!(program, queue, "stream_collide", [n]);
         let mut update_fields_builder = kernel_builder!(program, queue, "update_fields", [n]);
         let mut kernel_update_e_b_dyn: Option<Kernel> = None;
+        let mut kernel_lod_part_2_gather: Option<Kernel> = None;
         let mut kernel_clear_qu_lod: Option<Kernel> = None;
         match &fi {
             //Initialize kernels. Different Float types need different arguments (Fi-Buffer specifically)
@@ -234,6 +236,9 @@ impl LbmDomain {
             // Dynamic E/B kernel
             kernel_update_e_b_dyn = Some(
                 kernel!(program, queue, "update_e_b_dynamic", [n], ("E_stat", e_stat.as_ref().expect("e_stat")), ("B_stat", b_stat.as_ref().expect("b_stat")), ("E_dyn", e_dyn.as_ref().expect("e_dyn")), ("B_dyn", b_dyn.as_ref().expect("b_dyn")), ("Q", q.as_ref().expect("q")), ("u", &u), ("QU_lod", qu_lod.as_ref().expect("QU_lod")), ("flags", &flags))
+            );
+            kernel_lod_part_2_gather = Some(
+                kernel!(program, queue, "lod_part_2_gather", 1, 0)
             );
             // Clear LOD
             kernel_clear_qu_lod = Some(
@@ -337,6 +342,7 @@ impl LbmDomain {
             transfer_kernels,
 
             kernel_update_e_b_dyn,
+            kernel_lod_part_2_gather,
             kernel_clear_qu_lod,
 
             n_x, n_y, n_z,
@@ -398,6 +404,17 @@ impl LbmDomain {
                 .cmd()
                 .enq()
         }
+    }
+
+    pub fn enqueue_lod_part_2_gather(&self) -> ocl::Result<()> {
+        let kernel = self.kernel_lod_part_2_gather.as_ref().expect("Kernel should be initialized");
+        unsafe {
+            for i in (0..=self.cfg.mhd_lod_depth-1).rev() {
+                kernel.set_arg(1, i)?;
+                kernel.cmd().global_work_size(1<<(i*3)).enq()?;
+            }
+        }
+        Ok(())
     }
 
     pub fn enqueue_clear_qu_lod(&self) -> ocl::Result<()> {
