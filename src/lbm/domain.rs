@@ -78,6 +78,8 @@ impl LbmDomain {
     /// This ensures all arguments are correctly set.
     #[rustfmt::skip]
     pub fn new(lbm_config: &LbmConfig, device: Device, x: u32, y: u32, z: u32, i: u32) -> LbmDomain {
+        
+        let dinit = std::time::Instant::now();
         let n_x = lbm_config.n_x / lbm_config.d_x + 2u32 * (lbm_config.d_x > 1u32) as u32; // Size + Halo offsets
         let n_y = lbm_config.n_y / lbm_config.d_y + 2u32 * (lbm_config.d_y > 1u32) as u32; // When multiple domains on axis -> add 2 cells of padding
         let n_z = lbm_config.n_z / lbm_config.d_z + 2u32 * (lbm_config.d_z > 1u32) as u32;
@@ -198,7 +200,6 @@ impl LbmDomain {
 
         // Initialize Kernels
         info!("Initializing simulation kernels...");
-        now = std::time::Instant::now();
         let mut initialize_builder = kernel_builder!(program, queue, "initialize", [n]);
         let mut stream_collide_builder = kernel_builder!(program, queue, "stream_collide", [n]);
         let mut update_fields_builder = kernel_builder!(program, queue, "update_fields", [n]);
@@ -269,13 +270,11 @@ impl LbmDomain {
         let kernel_stream_collide: Kernel = stream_collide_builder.build().unwrap();
         let kernel_initialize: Kernel = initialize_builder.build().unwrap();
         let kernel_update_fields: Kernel = update_fields_builder.build().unwrap();
-        info!("Initialized kernels in {}ms", now.elapsed().as_millis()); // Initializing Simulation Kernels
 
 
         // Multi-Domain-Transfers:
         // Transfer buffer initializaton:
         info!("Initializing transfer buffers/kernels...");
-        now = std::time::Instant::now();
         let mut a_max: usize = 0;
         if lbm_config.d_x > 1 { a_max = cmp::max(a_max, n_y as usize * n_z as usize); } // Ax
         if lbm_config.d_y > 1 { a_max = cmp::max(a_max, n_x as usize * n_z as usize); } // Ay
@@ -334,12 +333,11 @@ impl LbmDomain {
                 } else { None }, // Insert Qi
             ], // Qi gas charge advection ddfs
         ];
-        info!("Initialized transfer buffers/kernels in {}ms", now.elapsed().as_millis());
 
 
         let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, (n_x, n_y, n_z))) } else { None };
         
-        info!("Domain {} ready.", i);
+        info!("Domain {} ready after {}ms", i, dinit.elapsed().as_millis());
 
         LbmDomain {
             queue,

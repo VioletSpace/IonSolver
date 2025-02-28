@@ -1,8 +1,9 @@
+use log::{error, info};
 use ocl_macros::*;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{file::ByteStream, lbm::Lbm};
-use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}};
+use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
 
 pub enum ModelType {
     Solid,
@@ -161,11 +162,13 @@ impl Mesh {
         stream.skip_bytes(80);
         let triangle_number = stream.next_u32();
         if triangle_number > 0 && stream.length() as u32 == 84+50*triangle_number {
-            println!("Loading STL file \"{}\" with {} triangles", path, triangle_number);
+            info!("Loading STL file \"{}\" with {} triangles", path, triangle_number);
         } else {
-            println!("Error: File \"{}\" is corrupted or unsupported. Only binary .stl files are supported. Aborting.", path);
+            error!("File \"{}\" is corrupted or unsupported. Only binary .stl files are supported. Aborting.", path);
             panic!("Mesh import failed");
         }
+
+        let now = Instant::now();
 
         let mut mesh = Mesh::new(triangle_number, center);
 
@@ -196,6 +199,8 @@ impl Mesh {
         }
         mesh.update_bounds();
 
+        info!("Successfully imported \"{path}\" in {}ms", now.elapsed().as_millis());
+
         mesh
     }
 }
@@ -208,7 +213,7 @@ impl Lbm {
         let box_size = F32_3 {x: 1.0, y: 1.0, z: 1.0};
         let center = F32_3 {x: cx, y: cy, z: cz};
         let rot_matrix = F32_3_3::construct_rotation_matrix(rx, ry, rz);
-        println!("{:?}", rot_matrix);
+        //println!("{:?}", rot_matrix);
         self.meshes.push(Mesh::read_stl_raw(path, false, box_size, center, rot_matrix, -scale.abs()));
     }
 
@@ -224,6 +229,7 @@ impl Lbm {
 
     #[allow(unused)]
     pub fn voxelise_mesh(&mut self, index: usize, ctype: ModelType) {
+        
         let mesh = &self.meshes[index];
 
         let nx = self.config.n_x; let ny = self.config.n_y; let nz = self.config.n_z;
@@ -236,7 +242,9 @@ impl Lbm {
             else { 2 }; // z direction has smallest area
         
         let tn = mesh.triangle_number;
-        
+
+        info!("Voxelising mesh with {tn} triangles on device. (This may take a while)");
+        let now = Instant::now();
         let flag = 1u8;
         
         for d in &mut self.domains {
@@ -263,6 +271,7 @@ impl Lbm {
 
             bwrite!(d.flags, flags)
         }
+        info!("Voxelising mesh took {}ms", now.elapsed().as_millis());
     }
 }
 
