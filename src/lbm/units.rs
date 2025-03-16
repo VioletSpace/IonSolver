@@ -132,6 +132,10 @@ impl Units {
         q / (self.a * self.s)
     }
 
+    pub fn magnetization_si_lu(&self, m: f32) -> f32 {
+        m / (self.a / self.m)
+    }
+
     pub fn epsilon_0_lu(&self) -> f32 {
         // 8.8541878128E-12 F/m
         // Unit: F/m  ==  A * s / V * m  ==  A * s / (kg*m^2/s^3 * A) * m  ==  s^4 * A^2 / kg * m^3

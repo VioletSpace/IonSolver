@@ -30,6 +30,8 @@ pub struct LbmDomain {
     kernel_update_e_b_dyn: Option<Kernel>, // Optional Kernels
     kernel_lod_part_2_gather: Option<Kernel>,
     kernel_clear_qu_lod: Option<Kernel>,
+    pub kernel_psi_from_mesh: Option<Kernel>,
+    pub kernel_static_b_from_mesh: Option<Kernel>,
 
     pub n_x: u32, // Domain size
     pub n_y: u32,
@@ -219,6 +221,8 @@ impl LbmDomain {
         let mut kernel_update_e_b_dyn: Option<Kernel> = None;
         let mut kernel_lod_part_2_gather: Option<Kernel> = None;
         let mut kernel_clear_qu_lod: Option<Kernel> = None;
+        let mut kernel_psi_from_mesh: Option<Kernel> = None;
+        let mut kernel_static_b_from_mesh: Option<Kernel> = None;
         match &fi {
             //Initialize kernels. Different Float types need different arguments (Fi-Buffer specifically)
             VariableFloatBuffer::F32(fif32) => { // Float Type F32
@@ -257,17 +261,24 @@ impl LbmDomain {
 
             kernel_args!(initialize_builder,     ("Q", q.as_ref().expect("Q")));
             kernel_args!(stream_collide_builder, ("Q", q.as_ref().expect("Q")), ("QU_lod", qu_lod.as_ref().expect("QU_lod")));
+            kernel_args!(voxelize_mesh_builder,  ("mpc_x", 0.0f32), ("mpc_y", 0.0f32), ("mpc_z", 0.0f32), ("tmpF", b_dyn.as_ref().expect("msg")));
 
             // Dynamic E/B kernel
             kernel_update_e_b_dyn = Some(
                 kernel!(program, queue, "update_e_b_dynamic", [n], ("E_stat", e_stat.as_ref().expect("e_stat")), ("B_stat", b_stat.as_ref().expect("b_stat")), ("E_dyn", e_dyn.as_ref().expect("e_dyn")), ("B_dyn", b_dyn.as_ref().expect("b_dyn")), ("Q", q.as_ref().expect("q")), ("u", &u), ("QU_lod", qu_lod.as_ref().expect("QU_lod")), ("flags", &flags))
             );
             kernel_lod_part_2_gather = Some(
-                kernel!(program, queue, "lod_part_2_gather", 1, 0)
+                kernel!(program, queue, "lod_part_2_gather", 1, ("QU_lod", qu_lod.as_ref().expect("QU_lod")), ("depth", 0))
             );
             // Clear LOD
             kernel_clear_qu_lod = Some(
                 kernel!(program, queue, "clear_qu_lod", [n_lod], ("QU_lod", qu_lod.as_ref().expect("QU_lod")))
+            );
+            kernel_psi_from_mesh = Some(
+                kernel!(program, queue, "psi_from_mesh", [(n_x+2)*(n_y+2)*(n_z+2)], ("flags", &flags), ("psi", e_dyn.as_ref().expect("e_dyn")), ("M", b_dyn.as_ref().expect("b_dyn")))
+            );
+            kernel_static_b_from_mesh = Some(
+                kernel!(program, queue, "static_b_from_mesh", [n], ("flags", &flags), ("B", b_stat.as_ref().expect("b_stat")), ("psi", e_dyn.as_ref().expect("e_dyn")))
             );
         }
         if lbm_config.ext_subgrid_ecr {
@@ -368,6 +379,8 @@ impl LbmDomain {
             kernel_update_e_b_dyn,
             kernel_lod_part_2_gather,
             kernel_clear_qu_lod,
+            kernel_psi_from_mesh,
+            kernel_static_b_from_mesh,
 
             n_x, n_y, n_z,
             fx: lbm_config.f_x, fy: lbm_config.f_y, fz: lbm_config.f_z,
@@ -754,8 +767,8 @@ fn get_device_defines(
     +"\n	#define TYPE_S  0x01" // 0b00000001 // (stationary or moving) solid boundary
     +"\n	#define TYPE_E  0x02" // 0b00000010 // equilibrium boundary (inflow/outflow)
     +"\n	#define TYPE_C  0x04" // 0b00000100 // changing electric field
-    +"\n	#define TYPE_F  0x08" // 0b00001000 // reserved type 1
-    +"\n	#define TYPE_I  0x10" // 0b00010000 // reserved type 2
+    +"\n	#define TYPE_F  0x08" // 0b00001000 // charged solid
+    +"\n	#define TYPE_M  0x10" // 0b00010000 // magnetic solid
     +"\n	#define TYPE_G  0x20" // 0b00100000 // reserved type 3
     +"\n	#define TYPE_X  0x40" // 0b01000000 // reserved type 4
     +"\n	#define TYPE_Y  0x80" // 0b10000000 // reserved type 5
@@ -772,6 +785,7 @@ fn get_device_defines(
      "\n	#define MAGNETO_HYDRO".to_owned()
     +"\n	#define DEF_KE "          + &format!("{:?}f", lbm_config.units.ke_lu()) // coulomb constant in simulation units
     +"\n	#define DEF_KMU "         + &format!("{:?}f", lbm_config.units.mu_0_lu() / (4.0 * std::f32::consts::PI))
+    +"\n	#define DEF_KMU0 "        + &format!("{:?}f", lbm_config.units.mu_0_lu())
     +"\n	#define DEF_KKGE  "       + &format!("{:?}f", lbm_config.units.kkge_lu()) // electron mass/charge in simulation units
     +"\n	#define DEF_KIMG  "       + &format!("{:?}f", lbm_config.units.kimg_lu()) // Inverse of mass of a propellant gas atom, scaled by 10^20
     +"\n	#define DEF_KVEV  "       + &format!("{:?}f", lbm_config.units.kveV_lu()) // 9.10938356e-31kg / (2*1.6021766208e-19)

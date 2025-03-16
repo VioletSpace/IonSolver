@@ -36,6 +36,7 @@
 #define DEF_KE 8.9875517923E9f
 #define DEF_KMU 0.0f
 #define def_ind_r 5 // Range of induction fill around cell
+#define DEF_KMU0 0.0f
 #define DEF_WQ 0.1f
 #define DEF_KKGE 1.0f // Constant mass/charge for an electron
 #define DEF_KIMG 1.0f // Inverse of mass of a propellant gas atom, scaled by 10^20
@@ -44,8 +45,8 @@
 #define TYPE_S  0x01 // 0b00000001 // (stationary or moving) solid boundary
 #define TYPE_E  0x02 // 0b00000010 // equilibrium boundary (inflow/outflow)
 #define TYPE_C  0x04 // 0b00000100 // changing electric field
-#define TYPE_F  0x08 // 0b00001000 // reserved type 1
-#define TYPE_I  0x10 // 0b00010000 // reserved type 2
+#define TYPE_F  0x08 // 0b00001000 // charged solid
+#define TYPE_M  0x10 // 0b00010000 // magnetic solid
 #define TYPE_G  0x20 // 0b00100000 // reserved type 3
 #define TYPE_X  0x40 // 0b01000000 // reserved type 4
 #define TYPE_Y  0x80 // 0b10000000 // reserved type 5
@@ -1131,7 +1132,14 @@ kernel void transfer__insert_fqi(const uint direction, const ulong t, const glob
 }
 #endif // MAGNETO_HYDRO
 
-kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global float* rho, global float* u, global uchar* flags, const ulong t, const uchar flag, const global float* p0, const global float* p1, const global float* p2, const global float* bbu ){ // voxelize triangle mesh
+kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global float* rho, global float* u, global uchar* flags, const ulong t, const uchar flag, const global float* p0, const global float* p1, const global float* p2, const global float* bbu
+#ifdef MAGNETO_HYDRO
+, const float mpc_x // magnetization per cell
+, const float mpc_y
+, const float mpc_z
+, global float* B_dyn
+#endif
+){ // voxelize triangle mesh
 	const uint a=get_global_id(0), A=get_area(direction); // a = domain area index for each side, A = area of the domain boundary
 	if(a>=A) return; // area might not be a multiple of def_workgroup_size, so return here to avoid writing in unallocated memory space
 	const uint triangle_number = as_uint(bbu[0]);
@@ -1177,8 +1185,8 @@ kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global fl
 		}
 		distances[j+1] = t;
 	}
+
 	bool inside = (intersections%2u)&&(intersections_check%2u);
-	const bool set_u = sq(ux)+sq(uy)+sq(uz)+sq(rx)+sq(ry)+sq(rz)>0.0f;
 	uint intersection = intersections%2u!=intersections_check%2u; // iterate through column, start with 0 regularly, start with 1 if forward and backward intersection count evenness differs (error correction)
 	const uint h0 = direction==0u ? xyz.x : direction==1u ? xyz.y : xyz.z;
 	const uint hmax = direction==0u ? (uint)clamp((int)x1-DEF_OX, 0, (int)DEF_NX) : direction==1u ? (uint)clamp((int)y1-DEF_OY, 0, (int)DEF_NY) : (uint)clamp((int)z1-DEF_OZ, 0, (int)DEF_NZ);
@@ -1193,30 +1201,61 @@ kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global fl
 		uchar flagsn = flags[n];
 		if(inside) {
 			flagsn = (flagsn&~TYPE_BO)|flag;
-			if(set_u) {
-				const float3 p = position(coordinates(n))+offset;
-				const float3 un = (float3)(ux, uy, uz)+cross((float3)(cx, cy, cz)-p, (float3)(rx, ry, rz));
-				u[                 n] = un.x;
-				u[    DEF_N+(ulong)n] = un.y;
-				u[2ul*DEF_N+(ulong)n] = un.z;
+			#ifdef MAGNETO_HYDRO
+			if (flag&TYPE_M) { // magnetised solid, add magnetisation to b_dyn 
+				B_dyn[          (ulong)n] = mpc_x;
+				B_dyn[    DEF_N+(ulong)n] = mpc_y;
+				B_dyn[2ul*DEF_N+(ulong)n] = mpc_z;
+			} else if (flag&TYPE_F) { // charged solid, add charge to b_dyn 
+				B_dyn[          (ulong)n] = mpc_x;
 			}
+			#endif // MAGNETO_HYDRO
 		} else {
-			if(set_u) {
-				const float3 un = (float3)(u[n], u[DEF_N+(ulong)n], u[2ul*DEF_N+(ulong)n]); // for velocity voxelization, only clear moving boundaries
-				if((flagsn&TYPE_BO)==TYPE_S) { // reconstruct DDFs when boundary point is converted to fluid
-					uint j[DEF_VELOCITY_SET]; // neighbor indices
-					neighbors(n, j); // calculate neighbor indices
-					float feq[DEF_VELOCITY_SET]; // f_equilibrium
-					calculate_f_eq(rho[n], un.x, un.y, un.z, feq);
-					store_f(n, feq, fi, j, t); // write to fi
-				}
-				if(sq(un.x)+sq(un.y)+sq(un.z)>0.0f) {
-					flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
-				}
-			} else {
-				flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
-			}
+			flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
 		}
 		flags[n] = flagsn;
 	}
 } // voxelize_mesh()
+
+#ifdef MAGNETO_HYDRO
+kernel void psi_from_mesh(const global uchar* flags, global float* psi, const global float* M) { // Psi field reuses the E_dyn buffer, M field reuses B_dyn buffer
+	const uint n = get_global_id(0);
+	const float3 c = convert_float3(coordinates_sl(n, DEF_NX+2, DEF_NY+2)); // coordinate in simulation, psi field is padded by 1 on each side
+	float psic = 0.0f; // psi at cell
+
+	for (int i = 0; i < DEF_N; i++) { // Iterate over every cell in simulation
+		if (flags[i]&TYPE_M) { // cell is magnet
+			const float3 cdiff = c - convert_float3(coordinates(i) + (uint3)(1, 1, 1));
+			const float l = length(cdiff);
+			if (!(l == 0.0f)) {
+				const float3 mag = (float3)(M[i], M[i+DEF_N], M[i+DEF_N*2]);
+				psic += dot(cdiff, mag) / cb(l);
+			}
+		}
+	}
+
+	psi[n] = psic / (4.0f * M_PI);
+}
+
+float3 nabla(const global float* v, const uint l0, const uint l1, const uint3 c) {
+	const uint n = c.x + (c.y + c.z * l1) * l0;
+	const uint yOff = l0;
+	const uint zOff = l0 * l1;
+
+	return (float3)(
+		(v[n+1   ] - v[n-1   ]) / 2.0f,
+		(v[n+yOff] - v[n-yOff]) / 2.0f,
+		(v[n+zOff] - v[n-zOff]) / 2.0f
+	);
+}
+
+kernel void static_b_from_mesh(const global uchar* flags, global float* B, const global float* psi) { // Psi field reuses the E_dyn buffer
+	const uint n = get_global_id(0);
+	const uint3 c = coordinates(n);
+	const float3 Bc = -DEF_KMU0 * nabla(psi, DEF_NX+2, DEF_NY+2, c + (uint3)(1, 1, 1));
+
+	B[(ulong)n         ] += Bc.x;
+	B[(ulong)n+DEF_N   ] += Bc.y;
+	B[(ulong)n+DEF_N*2u] += Bc.z;
+}
+#endif // MAGNETO_HYDRO

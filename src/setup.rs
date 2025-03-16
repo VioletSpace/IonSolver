@@ -52,7 +52,8 @@ pub fn setup() -> Lbm {
     //setup_verification()
     //setup_field_vis()
     //setup_ecr_test()
-    setup_mesh_test()
+    //setup_mesh_test()
+    setup_mesh_field_test()
 
     //let now = std::time::Instant::now();
     //lbm.run(10);
@@ -292,6 +293,7 @@ fn setup_ecr_test() -> Lbm {
     lbm
 }
 
+#[allow(unused)]
 fn setup_mesh_test() -> Lbm {
     let mut cfg = LbmConfig::new();
     cfg.n_x = 128;
@@ -305,8 +307,57 @@ fn setup_mesh_test() -> Lbm {
     cfg.graphics_config.axes_mode = true;
     let mut lbm = Lbm::new(cfg);
 
-    lbm.import_mesh_reposition("stl/cow.stl", 64.0, 128.0, 64.0, 90.0, 0.0, 0.0, 166.0);
+    // Cow mesh
+    lbm.import_mesh_reposition("stl/cow.stl", 64.0, 128.0, 64.0, 0.0, 0.0, 0.0, 200.0);
+    let off = 128.0-lbm.meshes[0].p_max.z;
+    lbm.meshes[0].translate(mesh::v3(0.0, 0.0, off));
     lbm.voxelise_mesh(0, mesh::ModelType::Solid);
+
+    lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.5, 10.0, 64.0, 0.0, 0.0, 0.0, 127.0);
+    lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 0.0, 0.0)});
+
+    lbm
+}
+
+fn setup_mesh_field_test() -> Lbm {
+    let mut cfg = LbmConfig::new();
+    cfg.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
+    cfg.n_x = 128;
+    cfg.n_y = 256;
+    cfg.n_z = 128;
+    cfg.nu = cfg.units.nu_si_lu(0.05);
+    cfg.velocity_set = VelocitySet::D3Q19;
+    // Extensions
+    cfg.ext_volume_force = true;
+    cfg.ext_magneto_hydro = true;
+    // Graphics
+    cfg.graphics_config.graphics_active = true;
+    cfg.graphics_config.streamline_every = 8;
+    cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
+    cfg.graphics_config.u_max = 0.00001;
+    cfg.graphics_config.streamline_mode = true;
+    cfg.graphics_config.axes_mode = true;
+    cfg.graphics_config.flags_surface_mode = false;
+    cfg.graphics_config.flags_mode = true;
+    let mut lbm = Lbm::new(cfg);
+
+    // Ring magnet
+    //lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.5, 128.5, 64.0, 0.0, 0.0, 0.0, 100.0);
+    //lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1200000.0, 0.0)});
+
+    // Magnetic cow
+    //lbm.import_mesh_reposition("stl/cow.stl", 64.0, 128.0, 64.0, 0.0, 0.0, 0.0, 166.0);
+    //let off = 128.0-lbm.meshes[0].p_max.z;
+    //lbm.meshes[0].translate(mesh::v3(0.0, 0.0, off));
+    //lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 10000.0, 0.0)});
+
+    // Thruster geometry
+    lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 600000.0, 0.0)});
+    lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 600000.0, 0.0)});
+
+    lbm.domains[0].dump_cell(((200 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
 
     lbm
 }

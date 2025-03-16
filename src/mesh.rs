@@ -5,18 +5,24 @@ use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use crate::{file::ByteStream, lbm::{Lbm, LbmDomain}};
 use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
 
+#[derive(Clone, Copy)]
 pub enum ModelType {
     Solid,
-    Magnet,
+    Magnet {magnetization: (f32, f32, f32)},
     Charged,
 }
 
 #[derive(Debug, Clone, Copy)]
 /// 3D Vector type
-struct F32_3 {
-    x: f32,
-    y: f32,
-    z: f32,
+pub struct F32_3 {
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// Returns a 3D vector
+pub fn v3(x: f32, y: f32, z: f32) -> F32_3 {
+    F32_3 { x, y, z }
 }
 
 impl Default for F32_3 {
@@ -59,10 +65,10 @@ impl F32_3_3 {
 }
 
 pub struct Mesh {
-    triangle_number: u32,
-    center: F32_3,
-    p_min:  F32_3,
-    p_max:  F32_3,
+    pub triangle_number: u32,
+    pub center: F32_3,
+    pub p_min:  F32_3,
+    pub p_max:  F32_3,
     p0: Vec<F32_3>,
     p1: Vec<F32_3>,
     p2: Vec<F32_3>,
@@ -100,7 +106,7 @@ impl Mesh {
         }
     }
 
-    fn scale(&mut self, scale: f32) {
+    pub fn scale(&mut self, scale: f32) {
         for i in 0..self.triangle_number as usize {
 			self.p0[i] = scale*(self.p0[i]-self.center)+self.center;
 			self.p1[i] = scale*(self.p1[i]-self.center)+self.center;
@@ -110,7 +116,7 @@ impl Mesh {
 		self.p_max = scale*(self.p_max-self.center)+self.center;
     }
 
-    fn translate(&mut self, translation: F32_3) {
+    pub fn translate(&mut self, translation: F32_3) {
         for i in 0..self.triangle_number as usize {
 			self.p0[i] += translation;
 			self.p1[i] += translation;
@@ -121,7 +127,7 @@ impl Mesh {
 		self.p_max += translation;
     }
 
-    fn rotate(&mut self, rotation: F32_3_3) {
+    pub fn rotate(&mut self, rotation: F32_3_3) {
         for i in 0..self.triangle_number as usize {
 			self.p0[i] = rotation*(self.p0[i]-self.center)+self.center;
 			self.p1[i] = rotation*(self.p1[i]-self.center)+self.center;
@@ -130,11 +136,11 @@ impl Mesh {
 		self.update_bounds();
     }
 
-    fn set_center(&mut self, center: F32_3) {
+    pub fn set_center(&mut self, center: F32_3) {
         self.center = center;
     }
 
-    fn get_center(&self) -> F32_3 {
+    pub fn get_center(&self) -> F32_3 {
         return self.center;
     }
 
@@ -253,16 +259,15 @@ impl Lbm {
 
         info!("Voxelising mesh with {tn} triangles on device. (This may take a while)");
         let now = Instant::now();
-        let flag = 1u8;
         
         for d in &mut self.domains {
-            d.voxelize_mesh_on_device(mesh, 0b00000001u8);
+            d.voxelize_mesh_on_device(mesh, ctype);
         }
     }
 }
 
 impl LbmDomain {
-    fn voxelize_mesh_on_device(&mut self, mesh: &Mesh, flag: u8) {
+    fn voxelize_mesh_on_device(&mut self, mesh: &Mesh, ctype: ModelType) {
         self.p0 = buffer!(&self.queue, [mesh.triangle_number * 3], 0.0f32);
         bwrite!(self.p0, mesh.p0.iter().flat_map(|p| [p.x, p.y, p.z]).collect::<Vec<f32>>());
         self.p1 = buffer!(&self.queue, [mesh.triangle_number * 3], 0.0f32);
@@ -290,6 +295,12 @@ impl LbmDomain {
         };
         let a = [self.n_y * self.n_z, self.n_x * self.n_z, self.n_x * self.n_y];
 
+        let flag: u8 = match ctype {
+            ModelType::Solid => 0b00000001,
+            ModelType::Magnet { magnetization: _ } => 0b00010001,
+            ModelType::Charged => 0b00001001,
+        };
+
         self.kernel_voxelize_mesh.set_arg("direction", direction).unwrap();
         self.kernel_voxelize_mesh.set_arg("t", self.t+1).unwrap();
         self.kernel_voxelize_mesh.set_arg("flag", flag).unwrap();
@@ -297,8 +308,31 @@ impl LbmDomain {
         self.kernel_voxelize_mesh.set_arg("p1", &self.p1).unwrap();
         self.kernel_voxelize_mesh.set_arg("p2", &self.p2).unwrap();
         self.kernel_voxelize_mesh.set_arg("bbu", &self.bbu).unwrap();
+        if self.cfg.ext_magneto_hydro {
+            match ctype {
+                ModelType::Magnet { magnetization } => {
+                    self.kernel_voxelize_mesh.set_arg("mpc_x", self.cfg.units.magnetization_si_lu(magnetization.0)).unwrap();
+                    self.kernel_voxelize_mesh.set_arg("mpc_y", self.cfg.units.magnetization_si_lu(magnetization.1)).unwrap();
+                    self.kernel_voxelize_mesh.set_arg("mpc_z", self.cfg.units.magnetization_si_lu(magnetization.2)).unwrap();
+                },
+                _ => {}
+            }
+            self.kernel_voxelize_mesh.set_arg("tmpF", self.b_dyn.as_ref().expect("msg")).unwrap();
+        }
         unsafe {
             self.kernel_voxelize_mesh.cmd().global_work_size(a[direction as usize]).enq().unwrap();
+        }
+        if self.cfg.ext_magneto_hydro {
+            match ctype {
+                ModelType::Magnet { magnetization: _ } => {
+                    info!("Calculating mesh magnetic field, this may take a while");
+                    unsafe {
+                        self.kernel_psi_from_mesh.as_ref().expect("kernel").enq().unwrap();
+                        self.kernel_static_b_from_mesh.as_ref().expect("kernel").enq().unwrap();
+                    }
+                },
+                _ => {}
+            }
         }
     }
 }
