@@ -22,7 +22,7 @@ mod units;
 mod types;
 
 use crate::opencl;
-use {domain::LbmDomain, graphics::GraphicsConfig};
+pub use {domain::LbmDomain, graphics::GraphicsConfig};
 use log::{info, warn};
 pub use types::*;
 pub use units::Units;

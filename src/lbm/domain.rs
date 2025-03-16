@@ -24,6 +24,7 @@ pub struct LbmDomain {
     kernel_initialize: Kernel, // Basic Kernels
     kernel_stream_collide: Kernel,
     kernel_update_fields: Kernel,
+    pub kernel_voxelize_mesh: Kernel,
     pub transfer_kernels: [[Option<Kernel>; 2]; 4],
 
     kernel_update_e_b_dyn: Option<Kernel>, // Optional Kernels
@@ -42,6 +43,10 @@ pub struct LbmDomain {
     pub rho: Buffer<f32>,
     pub u: Buffer<f32>,
     pub flags: Buffer<u8>,
+    pub p0: Buffer<f32>, // Triangle buffers
+    pub p1: Buffer<f32>,
+    pub p2: Buffer<f32>,
+    pub bbu: Buffer<f32>, // Mesh info
 
     pub transfer_p: Buffer<u8>, // Transfer buffers positive/negative
     pub transfer_m: Buffer<u8>, // Size is maximum of (17 bytes (rho, u and flags) or bytes needed for fi)
@@ -149,6 +154,12 @@ impl LbmDomain {
         let u =    buffer!(&queue, [n * 3], 0f32);
         let flags = buffer!(&queue, [n], 0u8);
 
+        // Mesh buffers
+        let p0 = buffer!(&queue, 1, 0.0f32);
+        let p1 = buffer!(&queue, 1, 0.0f32);
+        let p2 = buffer!(&queue, 1, 0.0f32);
+        let bbu = buffer!(&queue, 16, 0.0f32);
+
         // VOLUME_FORCE extension
         // Force field buffer as 3D Vectors
         let f: Option<Buffer<f32>> = if lbm_config.ext_force_field { Some(buffer!(&queue, [n * 3], 0f32)) } else { None };
@@ -203,6 +214,8 @@ impl LbmDomain {
         let mut initialize_builder = kernel_builder!(program, queue, "initialize", [n]);
         let mut stream_collide_builder = kernel_builder!(program, queue, "stream_collide", [n]);
         let mut update_fields_builder = kernel_builder!(program, queue, "update_fields", [n]);
+        let mut voxelize_mesh_builder = kernel_builder!(program, queue, "voxelize_mesh", 1);
+        kernel_args!(voxelize_mesh_builder, ("direction", 0u32));
         let mut kernel_update_e_b_dyn: Option<Kernel> = None;
         let mut kernel_lod_part_2_gather: Option<Kernel> = None;
         let mut kernel_clear_qu_lod: Option<Kernel> = None;
@@ -212,16 +225,19 @@ impl LbmDomain {
                 kernel_args!(initialize_builder, ("fi", fif32));
                 kernel_args!(stream_collide_builder, ("fi", fif32));
                 kernel_args!(update_fields_builder, ("fi", fif32));
+                kernel_args!(voxelize_mesh_builder, ("fi", fif32));
             }
             VariableFloatBuffer::U16(fiu16) => { // Float Type F16S/F16C
                 kernel_args!(initialize_builder, ("fi", fiu16));
                 kernel_args!(stream_collide_builder, ("fi", fiu16));
                 kernel_args!(update_fields_builder, ("fi", fiu16));
+                kernel_args!(voxelize_mesh_builder, ("fi", fiu16));
             }
         }
         kernel_args!(initialize_builder,     ("rho", &rho), ("u", &u), ("flags", &flags));
         kernel_args!(stream_collide_builder, ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("fx", lbm_config.f_x), ("fy", lbm_config.f_y), ("fz", lbm_config.f_z));
         kernel_args!(update_fields_builder,  ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("fx", lbm_config.f_x), ("fy", lbm_config.f_y), ("fz", lbm_config.f_z));
+        kernel_args!(voxelize_mesh_builder,  ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("flag", 1u8), ("p0", &p0), ("p1", &p1), ("p2", &p2), ("bbu", &bbu));
 
         // Conditional arguments. Place at end of kernel functions
         if lbm_config.ext_force_field { kernel_args!(stream_collide_builder, ("F", f.as_ref().expect("F"))); }
@@ -270,6 +286,7 @@ impl LbmDomain {
         let kernel_stream_collide: Kernel = stream_collide_builder.build().unwrap();
         let kernel_initialize: Kernel = initialize_builder.build().unwrap();
         let kernel_update_fields: Kernel = update_fields_builder.build().unwrap();
+        let kernel_voxelize_mesh: Kernel = voxelize_mesh_builder.build().unwrap();
 
 
         // Multi-Domain-Transfers:
@@ -345,6 +362,7 @@ impl LbmDomain {
             kernel_initialize,
             kernel_stream_collide,
             kernel_update_fields,
+            kernel_voxelize_mesh,
             transfer_kernels,
 
             kernel_update_e_b_dyn,
@@ -354,6 +372,7 @@ impl LbmDomain {
             n_x, n_y, n_z,
             fx: lbm_config.f_x, fy: lbm_config.f_y, fz: lbm_config.f_z,
             fi, rho, u, flags,
+            p0, p1, p2, bbu,
 
             transfer_p, transfer_m,
             transfer_p_host, transfer_m_host,

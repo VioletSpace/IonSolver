@@ -2,7 +2,7 @@ use log::{error, info};
 use ocl_macros::*;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
-use crate::{file::ByteStream, lbm::Lbm};
+use crate::{file::ByteStream, lbm::{Lbm, LbmDomain}};
 use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
 
 pub enum ModelType {
@@ -41,13 +41,20 @@ impl Default for F32_3_3 {
 
 impl F32_3_3 {
     fn construct_rotation_matrix(rx: f32, ry: f32, rz: f32) -> Self {
-        let al = rz / 180.0 * 2.0 * PI;
-        let be = ry / 180.0 * 2.0 * PI; 
-        let ga = rx / 180.0 * 2.0 * PI; 
+          Self::rotm_around_v(F32_3 {x: 1.0, y: 0.0, z: 0.0}, rx)
+        * Self::rotm_around_v(F32_3 {x: 0.0, y: 1.0, z: 0.0}, ry)
+        * Self::rotm_around_v(F32_3 {x: 0.0, y: 0.0, z: 1.0}, rz)
+    }
+
+    fn rotm_around_v(v: F32_3, r: f32) -> Self {
+        let sr = r.sin();
+        let cr = r.cos();
+        fn sq(x: f32) -> f32 { x * x }
         F32_3_3 {
-            xx: be.cos()*ga.cos(), yx: al.sin()*be.sin()*ga.cos()-al.cos()*ga.sin(), zx: al.cos()*be.sin()*ga.cos()+al.sin()*ga.sin(),
-            xy: be.cos()*ga.sin(), yy: al.sin()*be.sin()*ga.sin()+al.cos()*ga.cos(), zy: al.cos()*be.sin()*ga.sin()-al.sin()*ga.cos(),
-            xz: -be.sin(),         yz: al.sin()*be.cos(),                            zz: al.cos()*be.cos() }
+            xx: sq(v.x)+(1.0-sq(v.x))*cr, xy: v.x*v.y*(1.0-cr)-v.z*sr,  xz: v.x*v.z*(1.0-cr)+v.y*sr,
+            yx: v.x*v.y*(1.0-cr)+v.z*sr,  yy: sq(v.y)+(1.0-sq(v.y))*cr, yz: v.y*v.z*(1.0-cr)-v.x*sr,
+            zx: v.x*v.z*(1.0-cr)-v.y*sr,  zy: v.y*v.z*(1.0-cr)+v.x*sr,  zz: sq(v.z)+(1.0-sq(v.z))*cr,
+        }
     }
 }
 
@@ -212,7 +219,7 @@ impl Lbm {
     pub fn import_mesh(&mut self, path: &str, scale: f32, cx: f32, cy: f32, cz: f32, rx: f32, ry: f32, rz: f32) {
         let box_size = F32_3 {x: 1.0, y: 1.0, z: 1.0};
         let center = F32_3 {x: cx, y: cy, z: cz};
-        let rot_matrix = F32_3_3::construct_rotation_matrix(rx, ry, rz);
+        let rot_matrix = F32_3_3::construct_rotation_matrix(rx * PI / 180.0, ry * PI / 180.0, rz * PI / 180.0);
         //println!("{:?}", rot_matrix);
         self.meshes.push(Mesh::read_stl_raw(path, false, box_size, center, rot_matrix, -scale.abs()));
     }
@@ -220,10 +227,11 @@ impl Lbm {
     /// Add an STL model as a mesh to the LBM
     /// cx, cy, cz are center coordinates
     /// rx, ry, rz are rotations in degrees
+    /// size is the mesh size on its longest axis
     pub fn import_mesh_reposition(&mut self, path: &str, cx: f32, cy: f32, cz: f32, rx: f32, ry: f32, rz: f32, size: f32) {
-        let box_size = F32_3 {x: 1.0, y: 1.0, z: 1.0};
+        let box_size = F32_3 {x: self.config.n_x as f32, y: self.config.n_y as f32, z: self.config.n_z as f32};
         let center = F32_3 {x: cx, y: cy, z: cz};
-        let rot_matrix = F32_3_3::construct_rotation_matrix(rx, ry, rz);
+        let rot_matrix = F32_3_3::construct_rotation_matrix(rx * PI / 180.0, ry * PI / 180.0, rz * PI / 180.0);
         self.meshes.push(Mesh::read_stl_raw(path, true, box_size, center, rot_matrix, size));
     }
 
@@ -248,30 +256,50 @@ impl Lbm {
         let flag = 1u8;
         
         for d in &mut self.domains {
-            let an = match direction {
-                0 => d.n_y * d.n_z,
-                1 => d.n_x * d.n_z,
-                2 => d.n_x * d.n_y,
-                _ => 0
-            };
-
-            let flags = bget!(d.flags);
-
-            (0..an as usize).into_par_iter().for_each(|a| {
-                let xyz = if direction == 0 {
-                    F32_3 { x: (x0), y: (a as u32%ny) as f32, z: (a as u32/ny) as f32}
-                } else if direction == 1 {
-                    F32_3 { x: 0.0, y: (a as u32%ny) as f32, z: (a as u32/ny) as f32}
-                } else {
-                    F32_3 { x: 0.0, y: (a as u32%ny) as f32, z: (a as u32/ny) as f32}
-                };
-                
-                deborrow(&flags)[a] = flag;
-            });
-
-            bwrite!(d.flags, flags)
+            d.voxelize_mesh_on_device(mesh, 0b00000001u8);
         }
-        info!("Voxelising mesh took {}ms", now.elapsed().as_millis());
+    }
+}
+
+impl LbmDomain {
+    fn voxelize_mesh_on_device(&mut self, mesh: &Mesh, flag: u8) {
+        self.p0 = buffer!(&self.queue, [mesh.triangle_number * 3], 0.0f32);
+        bwrite!(self.p0, mesh.p0.iter().flat_map(|p| [p.x, p.y, p.z]).collect::<Vec<f32>>());
+        self.p1 = buffer!(&self.queue, [mesh.triangle_number * 3], 0.0f32);
+        bwrite!(self.p1, mesh.p1.iter().flat_map(|p| [p.x, p.y, p.z]).collect::<Vec<f32>>());
+        self.p2 = buffer!(&self.queue, [mesh.triangle_number * 3], 0.0f32);
+        bwrite!(self.p2, mesh.p2.iter().flat_map(|p| [p.x, p.y, p.z]).collect::<Vec<f32>>());
+        let x0 = mesh.p_min.x-2.0;
+        let y0 = mesh.p_min.y-2.0;
+        let z0 = mesh.p_min.z-2.0;
+        let x1 = mesh.p_max.x+2.0;
+        let y1 = mesh.p_max.y+2.0;
+        let z1 = mesh.p_max.z+2.0;
+        let bbu = vec![f32::from_bits(mesh.triangle_number), x0, y0, z0, x1, y1, z1];
+        bwrite!(self.bbu, bbu);
+
+        let direction: u32 = { // choose direction of minimum bounding-box cross-section area
+            let c = [(y1-y0)*(z1-z0), (z1-z0)*(x1-x0), (x1-x0)*(y1-y0)];
+            if c[0] < c[1] && c[0] < c[2] {
+                0
+            } else if c[1] < c[2] {
+                1
+            } else {
+                2
+            }
+        };
+        let a = [self.n_y * self.n_z, self.n_x * self.n_z, self.n_x * self.n_y];
+
+        self.kernel_voxelize_mesh.set_arg("direction", direction).unwrap();
+        self.kernel_voxelize_mesh.set_arg("t", self.t+1).unwrap();
+        self.kernel_voxelize_mesh.set_arg("flag", flag).unwrap();
+        self.kernel_voxelize_mesh.set_arg("p0", &self.p0).unwrap();
+        self.kernel_voxelize_mesh.set_arg("p1", &self.p1).unwrap();
+        self.kernel_voxelize_mesh.set_arg("p2", &self.p2).unwrap();
+        self.kernel_voxelize_mesh.set_arg("bbu", &self.bbu).unwrap();
+        unsafe {
+            self.kernel_voxelize_mesh.cmd().global_work_size(a[direction as usize]).enq().unwrap();
+        }
     }
 }
 
@@ -347,12 +375,15 @@ impl Mul<F32_3_3> for F32_3{
     }
 }
 
-#[inline]
-fn deborrow<'b, T>(r: &T) -> &'b mut T {
-    // Needed to access vector fields in parallel (3 components per index).
-    // This is safe, because no indecies are accessed multiple times
-    unsafe {
-        #[allow(mutable_transmutes)]
-        std::mem::transmute(r)
+// Multiply matrix with matrix
+impl Mul<F32_3_3> for F32_3_3{
+    type Output = F32_3_3;
+
+    fn mul(self, m: F32_3_3) -> Self::Output {
+        F32_3_3 {
+            xx: self.xx*m.xx+self.xy*m.yx+self.xz*m.zx, xy: self.xx*m.xy+self.xy*m.yy+self.xz*m.zy, xz: self.xx*m.xz+self.xy*m.yz+self.xz*m.zz,
+			yx: self.yx*m.xx+self.yy*m.yx+self.yz*m.zx, yy: self.yx*m.xy+self.yy*m.yy+self.yz*m.zy, yz: self.yx*m.xz+self.yy*m.yz+self.yz*m.zz,
+			zx: self.zx*m.xx+self.zy*m.yx+self.zz*m.zx, zy: self.zx*m.xy+self.zy*m.yy+self.zz*m.zy, zz: self.zx*m.xz+self.zy*m.yz+self.zz*m.zz
+        }
     }
 }

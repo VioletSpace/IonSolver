@@ -21,25 +21,25 @@ use crate::*;
 /// Run `your_lbm.initialize()` and return it with the config.
 pub fn setup() -> Lbm {
     
-    let mut cfg = LbmConfig::new();
-    cfg.n_x = 128;
-    cfg.n_y = 256;
-    cfg.n_z = 128;
-    cfg.nu = cfg.units.nu_si_lu(0.05);
-    cfg.velocity_set = VelocitySet::D3Q19;
+    //let mut cfg = LbmConfig::new();
+    //cfg.n_x = 128;
+    //cfg.n_y = 256;
+    //cfg.n_z = 128;
+    //cfg.nu = cfg.units.nu_si_lu(0.05);
+    //cfg.velocity_set = VelocitySet::D3Q19;
     // Graphics
-    cfg.graphics_config.graphics_active = true;
-    cfg.graphics_config.streamline_every = 8;
-    cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::U;
-    cfg.graphics_config.streamline_mode = true;
-    cfg.graphics_config.axes_mode = true;
+    //cfg.graphics_config.graphics_active = true;
+    //cfg.graphics_config.streamline_every = 8;
+    //cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::U;
+    //cfg.graphics_config.streamline_mode = true;
+    //cfg.graphics_config.axes_mode = true;
     //cfg.graphics_config.q_mode = true;
-    cfg.graphics_config.q_min = 0.00001;
-    let mut lbm = Lbm::new(cfg);
+    //cfg.graphics_config.q_min = 0.00001;
+    //let mut lbm = Lbm::new(cfg);
     //lbm.domains[0].q.as_ref().expect("msg").write(&charge).enq().unwrap();
     //lbm.setup_velocity_field((0.01, 0.001, 0.0), 1.0);
     //lbm.set_taylor_green(1);
-    lbm.import_mesh("stl/cow.stl", 0.0, 64.0, 128.0, 64.0, -30.0, 0.0, 0.0);
+    //lbm.import_mesh("stl/cow.stl", 0.0, 64.0, 128.0, 64.0, -30.0, 0.0, 0.0);
 
     //lbm
     
@@ -52,11 +52,12 @@ pub fn setup() -> Lbm {
     //setup_verification()
     //setup_field_vis()
     //setup_ecr_test()
+    setup_mesh_test()
 
     //let now = std::time::Instant::now();
     //lbm.run(10);
     //println!("10 time steps with 416^3 cells took: {}", now.elapsed().as_millis());
-    lbm
+    //lbm
     
 }
 
@@ -287,6 +288,25 @@ fn setup_ecr_test() -> Lbm {
     lbm_config.ecr_field_strength = 1.0f32;
 
     let mut lbm = Lbm::new(lbm_config);
+
+    lbm
+}
+
+fn setup_mesh_test() -> Lbm {
+    let mut cfg = LbmConfig::new();
+    cfg.n_x = 128;
+    cfg.n_y = 256;
+    cfg.n_z = 128;
+    cfg.nu = cfg.units.nu_si_lu(0.05);
+    cfg.velocity_set = VelocitySet::D3Q19;
+    // Graphics
+    cfg.graphics_config.graphics_active = true;
+    cfg.graphics_config.flags_surface_mode = true;
+    cfg.graphics_config.axes_mode = true;
+    let mut lbm = Lbm::new(cfg);
+
+    lbm.import_mesh_reposition("stl/cow.stl", 64.0, 128.0, 64.0, 90.0, 0.0, 0.0, 166.0);
+    lbm.voxelise_mesh(0, mesh::ModelType::Solid);
 
     lbm
 }

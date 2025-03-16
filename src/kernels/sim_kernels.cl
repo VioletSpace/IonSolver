@@ -19,6 +19,10 @@
 #define DEF_AY 1u
 #define DEF_AZ 1u
 
+#define DEF_OX 1u
+#define DEF_OY 1u
+#define DEF_OZ 1u
+
 #define D "D2Q9" // D2Q9/D3Q15/D3Q19/D3Q27
 #define DEF_VELOCITY_SET 9u // LBM velocity set (D2Q9/D3Q15/D3Q19/D3Q27)
 #define DEF_DIMENSIONS 2u // number spatial dimensions (2D or 3D)
@@ -1126,3 +1130,93 @@ kernel void transfer__insert_fqi(const uint direction, const ulong t, const glob
 	insert_fqi(a, index_insert_m(a, direction), 2u*direction+1u, t, (const global fpxx_copy*)transfer_buffer_m, fqi);
 }
 #endif // MAGNETO_HYDRO
+
+kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global float* rho, global float* u, global uchar* flags, const ulong t, const uchar flag, const global float* p0, const global float* p1, const global float* p2, const global float* bbu ){ // voxelize triangle mesh
+	const uint a=get_global_id(0), A=get_area(direction); // a = domain area index for each side, A = area of the domain boundary
+	if(a>=A) return; // area might not be a multiple of def_workgroup_size, so return here to avoid writing in unallocated memory space
+	const uint triangle_number = as_uint(bbu[0]);
+	const float x0=bbu[ 1], y0=bbu[ 2], z0=bbu[ 3], x1=bbu[ 4], y1=bbu[ 5], z1=bbu[ 6];
+	const float cx=bbu[ 7], cy=bbu[ 8], cz=bbu[ 9], ux=bbu[10], uy=bbu[11], uz=bbu[12], rx=bbu[13], ry=bbu[14], rz=bbu[15];
+	const uint3 xyz = 
+		direction==0u ? 
+			(uint3)((uint)clamp((int)x0-DEF_OX, 0, (int)DEF_NX-1), a%DEF_NY, a/DEF_NY)
+			: direction==1u ?
+				(uint3)(a/DEF_NZ, (uint)clamp((int)y0-DEF_OY, 0, (int)DEF_NY-1), a%DEF_NZ)
+				: (uint3)(a%DEF_NX, a/DEF_NX, (uint)clamp((int)z0-DEF_OZ, 0, (int)DEF_NZ-1));
+	const float3 offset = (float3)(0.5f*(float)((int)DEF_NX+2*DEF_OX)-0.5f, 0.5f*(float)((int)DEF_NY+2*DEF_OY)-0.5f, 0.5f*(float)((int)DEF_NZ+2*DEF_OZ)-0.5f);
+	const float3 r_origin = position(xyz)+offset;
+	const float3 r_direction = (float3)((float)(direction==0u), (float)(direction==1u), (float)(direction==2u));
+	uint intersections=0u, intersections_check=0u;
+	ushort distances[64]; // allow up to 64 mesh intersections
+	const bool condition = direction==0u ? r_origin.y<y0||r_origin.z<z0||r_origin.y>=y1||r_origin.z>=z1 : direction==1u ? r_origin.x<x0||r_origin.z<z0||r_origin.x>=x1||r_origin.z>=z1 : r_origin.x<x0||r_origin.y<y0||r_origin.x>=x1||r_origin.y>=y1;
+
+	if(condition) return; // don't use local memory (~25% slower, but this also runs on old OpenCL 1.0 GPUs)
+	for(uint i=0u; i<triangle_number; i++) {
+		const uint tx=3u*i, ty=tx+1u, tz=ty+1u;
+		const float3 p0i = (float3)(p0[tx], p0[ty], p0[tz]);
+		const float3 p1i = (float3)(p1[tx], p1[ty], p1[tz]);
+		const float3 p2i = (float3)(p2[tx], p2[ty], p2[tz]);
+		const float3 u=p1i-p0i, v=p2i-p0i, w=r_origin-p0i, h=cross(r_direction, v), q=cross(w, u); // bidirectional ray-triangle intersection (Moeller-Trumbore algorithm)
+		const float f=1.0f/dot(u, h), s=f*dot(w, h), t=f*dot(r_direction, q), d=f*dot(v, q);
+		if(s>=0.0f&&s<1.0f&&t>=0.0f&&s+t<1.0f) { // ray-triangle intersection ahead or behind
+			if(d>0.0f) { // ray-triangle intersection ahead
+				if(intersections<64u&&d<65536.0f) distances[intersections] = (ushort)d; // store distance to intersection in array as ushort
+				intersections++;
+			} else { // ray-triangle intersection behind
+				intersections_check++; // cast a second ray to check if starting point is really inside (error correction)
+			}
+		}
+	}
+
+	for(int i=1; i<(int)intersections; i++) { // insertion-sort distances
+		ushort t = distances[i];
+		int j = i-1;
+		while(distances[j]>t&&j>=0) {
+			distances[j+1] = distances[j];
+			j--;
+		}
+		distances[j+1] = t;
+	}
+	bool inside = (intersections%2u)&&(intersections_check%2u);
+	const bool set_u = sq(ux)+sq(uy)+sq(uz)+sq(rx)+sq(ry)+sq(rz)>0.0f;
+	uint intersection = intersections%2u!=intersections_check%2u; // iterate through column, start with 0 regularly, start with 1 if forward and backward intersection count evenness differs (error correction)
+	const uint h0 = direction==0u ? xyz.x : direction==1u ? xyz.y : xyz.z;
+	const uint hmax = direction==0u ? (uint)clamp((int)x1-DEF_OX, 0, (int)DEF_NX) : direction==1u ? (uint)clamp((int)y1-DEF_OY, 0, (int)DEF_NY) : (uint)clamp((int)z1-DEF_OZ, 0, (int)DEF_NZ);
+	const uint hmesh = h0+(uint)distances[min(intersections-1u, 63u)]; // clamp (intersections-1u) to prevent array out-of-bounds access
+	for(uint h=h0; h<hmax; h++) {
+		while(intersection<intersections&&h>h0+(uint)distances[min(intersection, 63u)]) { // clamp intersection to prevent array out-of-bounds access
+			inside = !inside; // passed mesh intersection, so switch inside/outside state
+			intersection++;
+		}
+		inside = inside&&(intersection<intersections&&h<hmesh); // point must be outside if there are no more ray-mesh intersections ahead (error correction)
+		const ulong n = index((uint3)(direction==0u?h:xyz.x, direction==1u?h:xyz.y, direction==2u?h:xyz.z));
+		uchar flagsn = flags[n];
+		if(inside) {
+			flagsn = (flagsn&~TYPE_BO)|flag;
+			if(set_u) {
+				const float3 p = position(coordinates(n))+offset;
+				const float3 un = (float3)(ux, uy, uz)+cross((float3)(cx, cy, cz)-p, (float3)(rx, ry, rz));
+				u[                 n] = un.x;
+				u[    DEF_N+(ulong)n] = un.y;
+				u[2ul*DEF_N+(ulong)n] = un.z;
+			}
+		} else {
+			if(set_u) {
+				const float3 un = (float3)(u[n], u[DEF_N+(ulong)n], u[2ul*DEF_N+(ulong)n]); // for velocity voxelization, only clear moving boundaries
+				if((flagsn&TYPE_BO)==TYPE_S) { // reconstruct DDFs when boundary point is converted to fluid
+					uint j[DEF_VELOCITY_SET]; // neighbor indices
+					neighbors(n, j); // calculate neighbor indices
+					float feq[DEF_VELOCITY_SET]; // f_equilibrium
+					calculate_f_eq(rho[n], un.x, un.y, un.z, feq);
+					store_f(n, feq, fi, j, t); // write to fi
+				}
+				if(sq(un.x)+sq(un.y)+sq(un.z)>0.0f) {
+					flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
+				}
+			} else {
+				flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
+			}
+		}
+		flags[n] = flagsn;
+	}
+} // voxelize_mesh()
