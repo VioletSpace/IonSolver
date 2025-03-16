@@ -327,6 +327,7 @@ fn setup_mesh_field_test() -> Lbm {
     cfg.n_z = 128;
     cfg.nu = cfg.units.nu_si_lu(0.05);
     cfg.velocity_set = VelocitySet::D3Q19;
+    cfg.ecr_freq = cfg.units.time_lu_si(2.45E9); // 2.45 gigahertz
     // Extensions
     cfg.ext_volume_force = true;
     cfg.ext_magneto_hydro = true;
@@ -334,11 +335,12 @@ fn setup_mesh_field_test() -> Lbm {
     cfg.graphics_config.graphics_active = true;
     cfg.graphics_config.streamline_every = 8;
     cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
-    cfg.graphics_config.u_max = 0.00001;
+    cfg.graphics_config.u_max = 0.00002;
     cfg.graphics_config.streamline_mode = true;
     cfg.graphics_config.axes_mode = true;
     cfg.graphics_config.flags_surface_mode = false;
     cfg.graphics_config.flags_mode = true;
+    cfg.graphics_config.ecrc_mode = true;
     let mut lbm = Lbm::new(cfg);
 
     // Ring magnet
@@ -354,8 +356,8 @@ fn setup_mesh_field_test() -> Lbm {
     // Thruster geometry
     lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
     lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
-    lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 600000.0, 0.0)});
-    lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 600000.0, 0.0)});
+    lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
+    lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
 
     lbm.domains[0].dump_cell(((200 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
 

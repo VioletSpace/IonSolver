@@ -17,7 +17,7 @@
 #define TYPE_S 0x01 // 0b00000001 // (stationary or moving) solid boundary
 #define TYPE_E 0x02 // 0b00000010 // equilibrium boundary (inflow/outflow)
 #define TYPE_F 0x08 // 0b00001000 // fluid
-#define TYPE_I 0x10 // 0b00010000 // interface
+#define TYPE_M 0x10 // 0b00010000 // interface
 #define TYPE_G 0x20 // 0b00100000 // gas
 #define TYPE_X 0x40 // 0b01000000 // reserved type X
 #define TYPE_Y 0x80 // 0b10000000 // reserved type Y
@@ -526,7 +526,7 @@ kernel void graphics_flags(const global uchar* flags, const global float* camera
 		flagsn_bo==TYPE_E ? COLOR_E : // equilibrium boundary
 		flagsn_bo==TYPE_MS ? COLOR_M : // moving boundary
 		flagsn&TYPE_F ? COLOR_F : // fluid
-		flagsn&TYPE_I ? COLOR_I : // interface
+		flagsn&TYPE_M ? COLOR_I : // interface
 		flagsn&TYPE_X ? COLOR_X : // reserved type X
 		flagsn&TYPE_Y ? COLOR_Y : // reserved type Y
 		COLOR_0; // regular or gas cell
@@ -649,7 +649,7 @@ kernel void graphics_field(const global uchar* flags, const global float* u, con
 	const float3 p = position(xyz);
 	if(!is_in_camera_frustrum(p, camera_cache)) return; // skip loading LBM data if grid cell is not visible
 
-	if(flags[n]&(TYPE_S|TYPE_E|TYPE_I|TYPE_G)) return;
+	if(flags[n]&(TYPE_S|TYPE_E|TYPE_M|TYPE_G)) return;
 
 	float3 un = load_u(n, u); // cache velocity
 	const float ul = length(un);
@@ -693,7 +693,7 @@ kernel void graphics_streamline(const global uchar* flags, const global float* u
 			const uint y = (uint)(p1.y+1.5f*(float)DEF_NY)%DEF_NY;
 			const uint z = (uint)(p1.z+1.5f*(float)DEF_NZ)%DEF_NZ;
 			const uint n = x+(y+z*DEF_NY)*DEF_NX;
-			if(flags[n]&(TYPE_S|TYPE_E|TYPE_I|TYPE_G)) return;
+			if(flags[n]&(TYPE_S|TYPE_E|TYPE_M|TYPE_G)) return;
 			const float3 un = load_u(n, u); // interpolate_u(p1, u)
 			const float ul = length(un);
 			p0 = p1;
@@ -708,7 +708,7 @@ kernel void graphics_streamline(const global uchar* flags, const global float* u
 kernel void graphics_q_field(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer) {
 	const uint n = get_global_id(0);
 	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute graphics_q_field() on halo
-	if(flags[n]&(TYPE_S|TYPE_E|TYPE_I|TYPE_G)) return;
+	if(flags[n]&(TYPE_S|TYPE_E|TYPE_M|TYPE_G)) return;
 	const float3 p = position(coordinates(n));
 	float camera_cache[15]; // cache camera parameters in case the kernel draws more than one shape
 	for(uint i=0u; i<15u; i++) camera_cache[i] = camera[i];
@@ -776,7 +776,7 @@ kernel void graphics_q(const global uchar* flags, const global float* u, const g
 	j[31] = x0+yp+zq; // 0+#
 	uchar flags_cell = 0u;
 	for(uint i=0u; i<32u; i++) flags_cell |= flags[j[i]];
-	if(flags_cell&(TYPE_S|TYPE_E|TYPE_I|TYPE_G)) return;
+	if(flags_cell&(TYPE_S|TYPE_E|TYPE_M|TYPE_G)) return;
 	float3 uj[8];
 	for(uint i=0u; i<8u; i++) uj[i] = load_u(j[i], u);
 	float v[8]; // don't load any velocity twice from global memory
@@ -905,6 +905,60 @@ kernel void graphics_ecrc(const global uchar* flags, const global float* u, cons
 		draw_triangle_interpolated(p+p0, p+p1, p+p2, c0, c1, c2, camera_cache, bitmap, zbuffer); // draw triangle with interpolated colors
 	}
 }/* */
+
+#ifdef MAGNETO_HYDRO
+bool ecrc_met(const global float* B, const float ecrf, const uint n) {
+	float3 Bn = {B[(ulong)n], B[(ulong)n+DEF_N], B[(ulong)n+DEF_N*2]};
+	float f_c = length(Bn) * (1.0f / (DEF_KME * 2.0f * M_PI_F)); // The cyclotron frequency needed to fulfill ECR condition at current cell
+	float rel = ecrf/f_c;
+	return (rel > 0.9 && rel < 1.1f);
+}
+
+/// ECR condition
+kernel void graphics_ecrc_met(const global uchar* flags, const global float* B, const float ecrf, const global float* camera, global int* bitmap, global int* zbuffer) {
+	const uint n = get_global_id(0);
+	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute graphics_flags() on halo
+	if(!ecrc_met(B, ecrf, n)) return;
+	float camera_cache[15]; // cache camera parameters in case the kernel draws more than one shape
+	for(uint i=0u; i<15u; i++) camera_cache[i] = camera[i];
+	const uint3 xyz = coordinates(n);
+	const float3 p = position(xyz);
+	if(!is_in_camera_frustrum(p, camera_cache)) return; // skip loading LBM data if grid cell is not visible
+	uint x0, xp, xm, y0, yp, ym, z0, zp, zm;
+	calculate_indices(n, &x0, &xp, &xm, &y0, &yp, &ym, &z0, &zp, &zm);
+	const int c = COLOR_I;
+
+
+	//draw_point(p, c, camera_cache, bitmap, zbuffer); // draw one pixel for every boundary cell
+	uint t;
+	t = xp+y0+z0; const bool not_xp = xyz.x<DEF_NX-1u && ecrc_met(B, ecrf, t) && !is_halo(t); // +00
+	t = xm+y0+z0; const bool not_xm = xyz.x>	   0u && ecrc_met(B, ecrf, t) && !is_halo(t); // -00
+	t = x0+yp+z0; const bool not_yp = xyz.y<DEF_NY-1u && ecrc_met(B, ecrf, t) && !is_halo(t); // 0+0
+	t = x0+ym+z0; const bool not_ym = xyz.y>	   0u && ecrc_met(B, ecrf, t) && !is_halo(t); // 0-0
+	t = x0+y0+zp; const bool not_zp = xyz.z<DEF_NZ-1u && ecrc_met(B, ecrf, t) && !is_halo(t); // 00+
+	t = x0+y0+zm; const bool not_zm = xyz.z>	   0u && ecrc_met(B, ecrf, t) && !is_halo(t); // 00-
+	const float3 p0 = (float3)(p.x-0.5f, p.y-0.5f, p.z-0.5f); // ---
+	const float3 p1 = (float3)(p.x+0.5f, p.y+0.5f, p.z+0.5f); // +++
+	const float3 p2 = (float3)(p.x-0.5f, p.y-0.5f, p.z+0.5f); // --+
+	const float3 p3 = (float3)(p.x+0.5f, p.y+0.5f, p.z-0.5f); // ++-
+	const float3 p4 = (float3)(p.x-0.5f, p.y+0.5f, p.z-0.5f); // -+-
+	const float3 p5 = (float3)(p.x+0.5f, p.y-0.5f, p.z+0.5f); // +-+
+	const float3 p6 = (float3)(p.x+0.5f, p.y-0.5f, p.z-0.5f); // +--
+	const float3 p7 = (float3)(p.x-0.5f, p.y+0.5f, p.z+0.5f); // -++
+	if(!(not_xm||not_ym)) draw_line(p0, p2, c, camera_cache, bitmap, zbuffer); // to draw the entire surface, replace || by &&
+	if(!(not_xm||not_zm)) draw_line(p0, p4, c, camera_cache, bitmap, zbuffer);
+	if(!(not_ym||not_zm)) draw_line(p0, p6, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xp||not_yp)) draw_line(p1, p3, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xp||not_zp)) draw_line(p1, p5, c, camera_cache, bitmap, zbuffer);
+	if(!(not_yp||not_zp)) draw_line(p1, p7, c, camera_cache, bitmap, zbuffer);
+	if(!(not_ym||not_zp)) draw_line(p2, p5, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xm||not_zp)) draw_line(p2, p7, c, camera_cache, bitmap, zbuffer);
+	if(!(not_yp||not_zm)) draw_line(p3, p4, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xp||not_zm)) draw_line(p3, p6, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xm||not_yp)) draw_line(p4, p7, c, camera_cache, bitmap, zbuffer);
+	if(!(not_xp||not_ym)) draw_line(p5, p6, c, camera_cache, bitmap, zbuffer);
+}
+#endif // MAGNETO_HYDRO
 
 kernel void graphics_axes(const global float* camera, global int* bitmap, global int* zbuffer) {
 	const int c_r = 0xFF0000;

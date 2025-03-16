@@ -182,6 +182,10 @@ impl Units {
         (1.40897016100511360652E-8_f64 / (sqd(self.a as f64) * sqd(self.s as f64) / self.kg as f64 ) ) as f32
     }
 
+    pub fn kme(&self) -> f32 {
+        (5.68563006E-12_f64 / (self.kg as f64 / (self.a as f64 * self.s as f64))) as f32
+    }
+
     /// From lbm.n_x and velocity u
     pub fn nu_from_Re(&self, Re: f32, x: f32, u: f32) -> f32 {
         x * u / Re

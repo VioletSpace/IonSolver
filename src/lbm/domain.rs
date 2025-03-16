@@ -363,7 +363,7 @@ impl LbmDomain {
         ];
 
 
-        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, (n_x, n_y, n_z))) } else { None };
+        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, &b_stat, (n_x, n_y, n_z))) } else { None };
         
         info!("Domain {} ready after {}ms", i, dinit.elapsed().as_millis());
 
@@ -789,6 +789,7 @@ fn get_device_defines(
     +"\n	#define DEF_KKGE  "       + &format!("{:?}f", lbm_config.units.kkge_lu()) // electron mass/charge in simulation units
     +"\n	#define DEF_KIMG  "       + &format!("{:?}f", lbm_config.units.kimg_lu()) // Inverse of mass of a propellant gas atom, scaled by 10^20
     +"\n	#define DEF_KVEV  "       + &format!("{:?}f", lbm_config.units.kveV_lu()) // 9.10938356e-31kg / (2*1.6021766208e-19)
+    +"\n	#define DEF_KME  "       + &format!("{:?}f", lbm_config.units.kme()) // 9.10938356e-31kg / (2*1.6021766208e-19)
     +"\n	#define DEF_LOD_DEPTH "   + &format!("{}u", lbm_config.mhd_lod_depth)
     +"\n    #define DEF_NUM_LOD "     + &format!("{}u", n_lod)
     +"\n    #define DEF_NUM_LOD_OWN " + &format!("{}u", n_lod_own)
