@@ -4,7 +4,7 @@
 //! 
 //! This module contains functions to configure the included graphics engine and to render simulations.
 
-use std::{f32::consts::PI, fs::File, io::BufWriter, sync::mpsc::Sender, thread};
+use std::{f32::consts::PI, fs::File, io::BufWriter, path::Display, sync::mpsc::Sender, thread};
 use log::info;
 use ocl::{Buffer, Kernel, Program, Queue};
 use ocl_macros::*;
@@ -13,13 +13,54 @@ use crate::{lbm::*, SimState};
 
 /// The vector field used in visualizations like field and streamline
 #[allow(unused)]
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum VecVisMode {
     U,
     EStat,
     BStat,
     EDyn,
     BDyn,
+}
+
+impl std::fmt::Display for VecVisMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VecVisMode::U => write!(f, "Velocity"),
+            VecVisMode::EStat => write!(f, "Static E field"),
+            VecVisMode::BStat => write!(f, "Static B field"),
+            VecVisMode::EDyn => write!(f, "Dynamic E field"),
+            VecVisMode::BDyn => write!(f, "Dynamic B field"),
+        }
+    }
+}
+
+/// The vector field used in visualizations like field and streamline
+#[allow(unused)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum SliceMode {
+    Off,
+    X,
+    Y,
+    Z,
+    XZ,
+    XYZ,
+    YZ,
+    XY,
+}
+
+impl std::fmt::Display for SliceMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SliceMode::Off => write!(f, "Off"),
+            SliceMode::X => write!(f, "X"),
+            SliceMode::Y => write!(f, "Y"),
+            SliceMode::Z => write!(f, "Z"),
+            SliceMode::XZ => write!(f, "X + Z"),
+            SliceMode::XYZ => write!(f, "X + Y + Z"),
+            SliceMode::YZ => write!(f, "Y + Z"),
+            SliceMode::XY => write!(f, "X + Y"),
+        }
+    }
 }
 
 /// Keyframe struct. Holds render interval keyframe
@@ -61,6 +102,10 @@ pub struct GraphicsConfig {
     pub stream_line_lenght: u32,
     /// The vector field used in visualizations like field and streamline (default: U)
     pub vec_vis_mode: VecVisMode,
+    pub slice_mode: SliceMode,
+    pub slice_x: u32,
+    pub slice_y: u32,
+    pub slice_z: u32,
 
     /// Visualize a vector field as streamlines
     pub streamline_mode: bool, // Active graphics modes
@@ -97,6 +142,10 @@ impl GraphicsConfig {
             streamline_every: 4,
             stream_line_lenght: 128,
             vec_vis_mode: VecVisMode::U,
+            slice_mode: SliceMode::Off,
+            slice_x: 0,
+            slice_y: 0,
+            slice_z: 0,
 
             streamline_mode: false,
             field_mode: false,
@@ -129,16 +178,6 @@ pub struct Graphics {
     kernel_graphics_q_field: Kernel,
     kernel_graphics_streamline: Kernel,
     kernel_graphics_ecrc_met: Option<Kernel>,
-
-    pub streamline_mode: bool,    // Draw streamline mode
-    pub field_mode: bool,         // Draw field
-    pub vec_vis_mode: VecVisMode, // What Vector to visualize
-    pub q_mode: bool,             // Draw q (vorticity)
-    pub q_field_mode: bool,
-    pub flags_mode: bool,         // Draw flags
-    pub flags_surface_mode: bool, // Draw flags (surface)
-    pub axes_mode: bool,          // Draw helper axes
-    pub ecrc_mode: bool,          // Draw ECR condition
 }
 
 impl Graphics {
@@ -199,15 +238,6 @@ impl Graphics {
             kernel_graphics_q_field,
             kernel_graphics_streamline,
             kernel_graphics_ecrc_met,
-            vec_vis_mode: lbm_config.graphics_config.vec_vis_mode,
-            streamline_mode: lbm_config.graphics_config.streamline_mode,
-            field_mode: lbm_config.graphics_config.field_mode,
-            q_mode: lbm_config.graphics_config.q_mode,
-            q_field_mode: lbm_config.graphics_config.q_field_mode,
-            flags_mode: lbm_config.graphics_config.flags_mode,
-            flags_surface_mode: lbm_config.graphics_config.flags_surface_mode,
-            axes_mode: lbm_config.graphics_config.axes_mode,
-            ecrc_mode: lbm_config.graphics_config.ecrc_mode
         }
     }
 }
@@ -226,7 +256,7 @@ impl super::Lbm {
         let mut zbuffers: Vec<Vec<i32>> =
             vec![vec![0; (width * height) as usize]; domain_numbers - 1];
         for d in 0..domain_numbers {
-            self.domains[d].enqueue_draw_frame();
+            self.domains[d].enqueue_draw_frame(self.config.graphics_config.clone());
         }
         for d in 0..domain_numbers {
             self.domains[d].queue.finish().unwrap();
@@ -287,7 +317,8 @@ impl super::Lbm {
             #[cfg(feature = "gui")] {
                 _ = sim_tx.send(SimState {
                     step: i,
-                    img: color_image,
+                    img: Some(color_image),
+                    graphics_cfg: None,
                 }); // This may fail if the simulation is terminated, but a frame is still being generated. Error can be ignored.
             }
             
@@ -329,7 +360,7 @@ impl super::Lbm {
 // enqueue_draw_frame function for LbmDomain
 #[rustfmt::skip]
 impl domain::LbmDomain {
-    pub fn enqueue_draw_frame(&self) {
+    pub fn enqueue_draw_frame(&self, cfg: GraphicsConfig) {
         let graphics = self
             .graphics
             .as_ref()
@@ -337,43 +368,51 @@ impl domain::LbmDomain {
         // Kernel enqueueing is unsafe
         unsafe {
             graphics.kernel_clear.enq().unwrap();
-            if graphics.axes_mode {
+            if cfg.axes_mode {
                 graphics.kernel_graphics_axes.enq().unwrap();
             }
-            if graphics.streamline_mode {
+            if cfg.streamline_mode {
                 // Streamlines can show velocity, dynamic and static EStat and BStat field
-                graphics.kernel_graphics_streamline.set_arg("u", match graphics.vec_vis_mode {
+                graphics.kernel_graphics_streamline.set_arg("u", match cfg.vec_vis_mode {
                     VecVisMode::U => &self.u,
                     VecVisMode::EStat => self.e_stat.as_ref().expect("E_stat buffer used but not initialized"),
                     VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
                 }).unwrap();
+                graphics.kernel_graphics_streamline.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
+                graphics.kernel_graphics_streamline.set_arg("slice_x", cfg.slice_x).unwrap();
+                graphics.kernel_graphics_streamline.set_arg("slice_y", cfg.slice_y).unwrap();
+                graphics.kernel_graphics_streamline.set_arg("slice_z", cfg.slice_z).unwrap();
                 graphics.kernel_graphics_streamline.enq().unwrap();
             }
-            if graphics.field_mode {
-                graphics.kernel_graphics_field.set_arg("u", match graphics.vec_vis_mode {
+            if cfg.field_mode {
+                graphics.kernel_graphics_field.set_arg("u", match cfg.vec_vis_mode {
                     VecVisMode::U => &self.u,
                     VecVisMode::EStat => self.e_stat.as_ref().expect("E_stat buffer used but not initialized"),
                     VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
                 }).unwrap();
+                graphics.kernel_graphics_field.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
+                graphics.kernel_graphics_field.set_arg("slice_x", cfg.slice_x).unwrap();
+                graphics.kernel_graphics_field.set_arg("slice_y", cfg.slice_y).unwrap();
+                graphics.kernel_graphics_field.set_arg("slice_z", cfg.slice_z).unwrap();
                 graphics.kernel_graphics_field.enq().unwrap();
             }
-            if graphics.q_mode {
+            if cfg.q_mode {
                 graphics.kernel_graphics_q.enq().unwrap();
             }
-            if graphics.q_field_mode {
+            if cfg.q_field_mode {
                 graphics.kernel_graphics_q_field.enq().unwrap();
             }
-            if graphics.flags_mode {
+            if cfg.flags_mode {
                 graphics.kernel_graphics_flags.enq().unwrap();
             }
-            if graphics.flags_surface_mode {
+            if cfg.flags_surface_mode {
                 graphics.kernel_graphics_flags_mc.enq().unwrap();
             }
-            if graphics.ecrc_mode {
+            if cfg.ecrc_mode {
                 if self.cfg.ext_magneto_hydro {
                     graphics.kernel_graphics_ecrc_met.as_ref().expect("kernel").enq().unwrap();
                 }

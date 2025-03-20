@@ -10,6 +10,7 @@ use std::{fs, sync::mpsc, thread};
 use eframe::*;
 use egui::{Color32, InnerResponse, Label, Sense, Stroke, TextureOptions, Vec2};
 
+use crate::lbm::GraphicsConfig;
 use crate::{SimControlTx, SimState};
 
 struct SimControl {
@@ -28,6 +29,10 @@ struct SimControl {
     camera_rotation: Vec<f32>,
     camera_zoom: f32,
 
+    graphics_cfg: GraphicsConfig,
+    cfg_send: bool,
+    cfg_init: bool,
+
     ctrl_tx: mpsc::Sender<SimControlTx>,
     sim_rx: mpsc::Receiver<SimState>,
 }
@@ -38,8 +43,9 @@ impl SimControl {
     }
 
     pub fn send_control(&mut self) {
-        self.ctrl_tx
-            .send(SimControlTx {
+        let tx = if self.cfg_send && self.cfg_init {
+            self.cfg_send = false;
+            SimControlTx {
                 paused: self.paused,
                 save_img: self.save_img,
                 save_file: self.save_file,
@@ -50,7 +56,25 @@ impl SimControl {
                 active: true,
                 camera_rotation: self.camera_rotation.clone(),
                 camera_zoom: self.camera_zoom,
-            })
+                graphics_cfg: Some(self.graphics_cfg.clone()),
+            }
+        } else {
+            SimControlTx {
+                paused: self.paused,
+                save_img: self.save_img,
+                save_file: self.save_file,
+                load_file: self.load_file,
+                clear_images: self.clear_images,
+                frame_spacing: self.frame_spacing,
+                file_name: self.file_name.clone(),
+                active: true,
+                camera_rotation: self.camera_rotation.clone(),
+                camera_zoom: self.camera_zoom,
+                graphics_cfg: None,
+            }
+        };
+        self.ctrl_tx
+            .send(tx)
             .expect("GUI cannot communicate with sim thread");
 
         // save and load commands should only be sent once
@@ -183,24 +207,114 @@ impl SimControl {
                 })
             })
     }
+
+    fn draw_graphics_control(&mut self,
+        ctx: &egui::Context,
+        _frame: &mut eframe::Frame,
+    ) -> InnerResponse<Option<()>> {
+        egui::Window::new("Graphics Control")
+            .open(&mut true)
+            .auto_sized()
+            .show(ctx, |ui| {
+                egui::Grid::new("my_grid")
+                .num_columns(2)
+                .spacing([40.0, 4.0])
+                .striped(false)
+                .show(ui, |ui| {
+                    ui.label("Streamlines");
+                    if ui.checkbox(&mut self.graphics_cfg.streamline_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Vector field");
+                    if ui.checkbox(&mut self.graphics_cfg.field_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+
+                    ui.label("Vector Type");
+                    egui::ComboBox::from_label(" Type")
+                        .selected_text(format!("{}", self.graphics_cfg.vec_vis_mode))
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::U, "Velocity").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::EStat, "Static E field").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BStat, "Static B field").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::EDyn, "Dynamic E field").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BDyn, "Dynamic B field").changed() {self.cfg_send = true;}
+                        });
+                    ui.end_row();
+
+                    ui.label("Slice Mode");
+                    egui::ComboBox::from_label(" Mode")
+                        .selected_text(format!("{}", self.graphics_cfg.slice_mode))
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::Off, "Off").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::X, "X").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::Y, "Y").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::Z, "Z").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::XZ, "X + Z").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::XYZ, "X + Y + Z").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::YZ, "Y + Z").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.slice_mode, crate::lbm::graphics::SliceMode::XY, "X + Y").changed() {self.cfg_send = true;}
+                        });
+                    ui.end_row();
+
+                    ui.label("Slice X");
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_x, 0..=128).suffix(" cells")).changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Slice Y");
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_y, 0..=256).suffix(" cells")).changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Slice Z");
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_z, 0..=128).suffix(" cells")).changed() {self.cfg_send = true;}
+                    ui.end_row();
+
+                    ui.label("Vorticity");
+                    if ui.checkbox(&mut self.graphics_cfg.q_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Vorticity field");
+                    if ui.checkbox(&mut self.graphics_cfg.q_field_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Flags");
+                    if ui.checkbox(&mut self.graphics_cfg.flags_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Flags Surface");
+                    if ui.checkbox(&mut self.graphics_cfg.flags_surface_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("Axes");
+                    if ui.checkbox(&mut self.graphics_cfg.axes_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("ECR Condition");
+                    if ui.checkbox(&mut self.graphics_cfg.ecrc_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
+                });
+            }).expect("msg")
+    }
 }
 
 impl App for SimControl {
     /// UI update loop
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let recieve_result = self.sim_rx.try_iter().last();
-        if let Some(recieve) = recieve_result {
-            if self.display_img.is_none() {
-                self.display_img =
-                    Some(ctx.load_texture("sim", recieve.img.clone(), Default::default()))
+        for recieve in self.sim_rx.try_iter() {
+            match recieve.img {
+                Some(img) => {
+                    if self.display_img.is_none() {
+                        self.display_img =
+                            Some(ctx.load_texture("sim", img.clone(), Default::default()))
+                    }
+                    if recieve.step >= self.step {
+                        self.display_img
+                            .as_mut()
+                            .expect("Isn't TextureHandle")
+                            .set(img, TextureOptions::default());
+                    }
+                },
+                None => {},
             }
-            if recieve.step >= self.step {
-                self.display_img
-                    .as_mut()
-                    .expect("Isn't TextureHandle")
-                    .set(recieve.img, TextureOptions::default());
+            
+            match recieve.graphics_cfg {
+                Some(cfg) => {self.graphics_cfg = cfg; self.cfg_init = true;},
+                None => {},
             }
-            self.step = recieve.step;
+            if self.step < recieve.step {
+                self.step = recieve.step;
+            }
         }
 
         let mut send_control = false; // determines if ui needs to send control
@@ -278,7 +392,9 @@ impl App for SimControl {
             });
         });
 
-        if send_control {
+        self.draw_graphics_control(ctx, _frame);
+
+        if send_control || self.cfg_send {
             self.send_control()
         }
 
@@ -322,7 +438,7 @@ pub fn run_ui(sim_rx: Receiver<SimState>, ctrl_tx: Sender<SimControlTx>) {
         ..Default::default()
     };
 
-    // setup simcontrol struc to pass params and channels to GUI
+    // setup simcontrol struct to pass params and channels to GUI
     let simcontrol = SimControl {
         paused: true,
         save_img: false,
@@ -339,6 +455,9 @@ pub fn run_ui(sim_rx: Receiver<SimState>, ctrl_tx: Sender<SimControlTx>) {
         camera_zoom: 3.0,
         ctrl_tx,
         sim_rx,
+        graphics_cfg: GraphicsConfig::new(),
+        cfg_init: false,
+        cfg_send: false,
     };
 
     // Start window loop

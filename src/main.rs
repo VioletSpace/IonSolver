@@ -23,7 +23,8 @@ use lbm::*;
 pub struct SimState {
     pub step: u32,
     #[cfg(feature = "gui")]
-    pub img: egui::ColorImage,
+    pub img: Option<egui::ColorImage>,
+    pub graphics_cfg: Option<GraphicsConfig>,
 }
 
 impl SimState {
@@ -31,7 +32,8 @@ impl SimState {
         Self {
             step: 0,
             #[cfg(feature = "gui")]
-            img: egui::ColorImage::default(),
+            img: None,
+            graphics_cfg: None,
         }
     }
 }
@@ -48,6 +50,7 @@ pub struct SimControlTx {
     active: bool,
     camera_rotation: Vec<f32>,
     camera_zoom: f32,
+    graphics_cfg: Option<GraphicsConfig>,
 }
 
 fn main() {
@@ -98,6 +101,7 @@ fn run_gpu() {
         active: false,
         camera_rotation: vec![0.0; 2],
         camera_zoom: 3.0,
+        graphics_cfg: None,
     });
 
     handle.join().unwrap();
@@ -107,6 +111,12 @@ fn run_gpu() {
 #[allow(dead_code)]
 fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>) {
     //sim_tx.send(state) sends data to the main window loop
+    
+    let mut step_c: u32 = 0;
+
+    let mut lbm = setup::setup();
+    #[cfg(feature = "gui")]
+    sim_tx.send(SimState { step: 0, img: None, graphics_cfg: Some(lbm.config.graphics_config.clone()) }).unwrap();
     let mut state = SimControlTx {
         paused: true,
         save_img: false,
@@ -118,11 +128,10 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
         active: true,
         camera_rotation: vec![0.0; 2],
         camera_zoom: 3.0,
+        graphics_cfg: None,
     };
-    let mut step_c: u32 = 0;
-
-    let mut lbm = setup::setup();
     lbm.initialize();
+    
 
     // Clearing out folder if requested
     if state.save_img && state.clear_images {
@@ -135,12 +144,12 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
 
     // Create graphics thread with evil pointer hacks
     if lbm.config.graphics_config.graphics_active {
-        let lbm_ptr = &lbm as *const _ as usize;
+        let lbm_ptr = &mut lbm as *mut _ as usize;
         let state_ptr = &state as *const _ as usize;
         let step_ptr = &step_c as *const _ as usize;
         let sim_tx_g = sim_tx.clone();
         thread::spawn(move || {
-            let lbm = unsafe { &*(lbm_ptr as *const Lbm) };
+            let lbm = unsafe { &mut*(lbm_ptr as *mut Lbm) };
             let state = unsafe { &*(state_ptr as *const SimControlTx) };
             let step_count = unsafe { &*(step_ptr as *const u32) };
             let mut drawn_step: u32 = 0;
@@ -178,7 +187,13 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
                         bwrite!(d.graphics.as_ref().expect("graphics").camera_params, params);
                     }
                 }
-                if (camera_changed || (!state.paused && frame_changed))
+                
+                let cfg_updated = match &state.graphics_cfg {
+                    Some(cfg) => {lbm.config.graphics_config = cfg.clone(); true},
+                    None => {false},
+                };
+
+                if (camera_changed || (!state.paused && frame_changed) || cfg_updated)
                     && lbm.config.graphics_config.graphics_active
                 {
                     // Only draws frames, never saves them
