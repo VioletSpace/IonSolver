@@ -919,6 +919,7 @@ kernel void graphics_ecrc_met(const global uchar* flags, const global float* B, 
 	const uint n = get_global_id(0);
 	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute graphics_flags() on halo
 	if(!ecrc_met(B, ecrf, n)) return;
+	if(flags[n]&TYPE_S) return;
 	float camera_cache[15]; // cache camera parameters in case the kernel draws more than one shape
 	for(uint i=0u; i<15u; i++) camera_cache[i] = camera[i];
 	const uint3 xyz = coordinates(n);
