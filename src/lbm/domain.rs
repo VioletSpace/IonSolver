@@ -368,7 +368,7 @@ impl LbmDomain {
         ];
 
 
-        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, &b_stat, (n_x, n_y, n_z))) } else { None };
+        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, &rho, &b_stat, (n_x, n_y, n_z))) } else { None };
         
         info!("Domain {} ready after {}ms", i, dinit.elapsed().as_millis());
 
@@ -792,7 +792,7 @@ fn get_device_defines(
     +"\n	#define TYPE_X  0x40" // 0b01000000 // reserved type 4
     +"\n	#define TYPE_Y  0x80" // 0b10000000 // reserved type 5
     +"\n	#define TYPE_MS 0x03" // 0b00000011 // cell next to moving solid boundary
-    +"\n	#define TYPE_BO 0x03" // 0b00000011 // any flag bit used for boundaries
+    +"\n	#define TYPE_BO 0b00011111" // 0b00011111 // any flag bit used for boundaries
     + match lbm_config.float_type { //Floatingpoint types
         FloatType::FP16S => &fp16s,
         FloatType::FP16C => &fp16c,

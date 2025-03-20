@@ -227,6 +227,9 @@ impl SimControl {
                     ui.label("Vector field");
                     if ui.checkbox(&mut self.graphics_cfg.field_mode, "").changed() {self.cfg_send = true;}
                     ui.end_row();
+                    ui.label("Field slice");
+                    if ui.checkbox(&mut self.graphics_cfg.field_slice_mode, "").changed() {self.cfg_send = true;}
+                    ui.end_row();
 
                     ui.label("Vector Type");
                     egui::ComboBox::from_label(" Type")
@@ -237,6 +240,15 @@ impl SimControl {
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BStat, "Static B field").changed() {self.cfg_send = true;}
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::EDyn, "Dynamic E field").changed() {self.cfg_send = true;}
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BDyn, "Dynamic B field").changed() {self.cfg_send = true;}
+                        });
+                    ui.end_row();
+
+                    ui.label("Field Mode");
+                    egui::ComboBox::from_label(" F Type")
+                        .selected_text(format!("{}", self.graphics_cfg.field_vis))
+                        .show_ui(ui, |ui| {
+                            if ui.selectable_value(&mut self.graphics_cfg.field_vis, crate::lbm::graphics::FieldVisMode::Scalar, "Scalar field").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.field_vis, crate::lbm::graphics::FieldVisMode::Vector, "Vector field").changed() {self.cfg_send = true;}
                         });
                     ui.end_row();
 

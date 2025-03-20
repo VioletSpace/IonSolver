@@ -63,6 +63,21 @@ impl std::fmt::Display for SliceMode {
     }
 }
 
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq)]
+pub enum FieldVisMode {
+    Vector,
+    Scalar,
+}
+
+impl std::fmt::Display for FieldVisMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FieldVisMode::Scalar => write!(f, "Scalar"),
+            FieldVisMode::Vector => write!(f, "Vector")
+        }
+    }
+}
+
 /// Keyframe struct. Holds render interval keyframe
 #[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct Keyframe {
@@ -96,6 +111,8 @@ pub struct GraphicsConfig {
     pub q_min: f32,
     /// Force visualization maximum (default: 0.002)
     pub f_max: f32,
+    /// Density
+    pub rho_delta: f32,
     /// Draw streamlines every (x) cells (default: 4)
     pub streamline_every: u32,
     /// Length of streamlines (default: 128)
@@ -106,11 +123,14 @@ pub struct GraphicsConfig {
     pub slice_x: u32,
     pub slice_y: u32,
     pub slice_z: u32,
+    pub field_vis: FieldVisMode,
 
     /// Visualize a vector field as streamlines
     pub streamline_mode: bool, // Active graphics modes
     /// Visualize a vector field as individual vector lines
     pub field_mode: bool,
+    /// Visualize a vector or density field as a slice
+    pub field_slice_mode: bool,
     /// Visualize vorticity
     pub q_mode: bool,
     pub q_field_mode: bool,
@@ -139,6 +159,7 @@ impl GraphicsConfig {
             u_max: 0.25,
             q_min: 0.0001,
             f_max: 0.002,
+            rho_delta: 0.5,
             streamline_every: 4,
             stream_line_lenght: 128,
             vec_vis_mode: VecVisMode::U,
@@ -146,9 +167,11 @@ impl GraphicsConfig {
             slice_x: 0,
             slice_y: 0,
             slice_z: 0,
+            field_vis: FieldVisMode::Vector,
 
             streamline_mode: false,
             field_mode: false,
+            field_slice_mode: false,
             q_mode: false,
             q_field_mode: false,
             flags_mode: false,
@@ -172,6 +195,7 @@ pub struct Graphics {
 
     kernel_graphics_axes: Kernel,
     kernel_graphics_field: Kernel,
+    kernel_graphics_field_slice: Kernel,
     kernel_graphics_flags: Kernel,
     kernel_graphics_flags_mc: Kernel,
     kernel_graphics_q: Kernel,
@@ -188,6 +212,7 @@ impl Graphics {
         queue: &Queue,
         flags: &Buffer<u8>,
         u: &Buffer<f32>,
+        rho: &Buffer<f32>,
         b: &Option<Buffer<f32>>,
         n_d: (u32, u32, u32),
     ) -> Graphics {
@@ -211,13 +236,14 @@ impl Graphics {
         let kernel_clear = kernel!(program, queue, "graphics_clear", bitmap.len(), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
 
         // Graphics/Visualization kernels:
-        let kernel_graphics_axes       = kernel!(program, queue, "graphics_axes",           1,                             ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_field      = kernel!(program, queue, "graphics_field",        [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
-        let kernel_graphics_flags      = kernel!(program, queue, "graphics_flags",        [n], ("flags", flags),           ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_flags_mc   = kernel!(program, queue, "graphics_flags_mc",     [n], ("flags", flags),           ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_q          = kernel!(program, queue, "graphics_q",            [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_q_field    = kernel!(program, queue, "graphics_q_field",      [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        let kernel_graphics_axes       = kernel!(program, queue, "graphics_axes",           1,                                           ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
+        let kernel_graphics_field      = kernel!(program, queue, "graphics_field",        [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        let kernel_graphics_field_slice= kernel!(program, queue, "graphics_field_slice",  [1], ("flags", flags), ("u", u), ("rho", rho), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("field_mode", 0), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        let kernel_graphics_flags      = kernel!(program, queue, "graphics_flags",        [n], ("flags", flags),                         ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
+        let kernel_graphics_flags_mc   = kernel!(program, queue, "graphics_flags_mc",     [n], ("flags", flags),                         ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
+        let kernel_graphics_q          = kernel!(program, queue, "graphics_q",            [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
+        let kernel_graphics_q_field    = kernel!(program, queue, "graphics_q_field",      [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
+        let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
         let mut kernel_graphics_ecrc_met = None;
 
         if lbm_config.ext_magneto_hydro {
@@ -232,6 +258,7 @@ impl Graphics {
 
             kernel_graphics_axes,
             kernel_graphics_field,
+            kernel_graphics_field_slice,
             kernel_graphics_flags,
             kernel_graphics_flags_mc,
             kernel_graphics_q,
@@ -400,6 +427,53 @@ impl domain::LbmDomain {
                 graphics.kernel_graphics_field.set_arg("slice_z", cfg.slice_z).unwrap();
                 graphics.kernel_graphics_field.enq().unwrap();
             }
+            if cfg.field_slice_mode {
+                graphics.kernel_graphics_field_slice.set_arg("u", match cfg.vec_vis_mode {
+                    VecVisMode::U => &self.u,
+                    VecVisMode::EStat => self.e_stat.as_ref().expect("E_stat buffer used but not initialized"),
+                    VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
+                    VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
+                    VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
+                }).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("field_mode", cfg.field_vis as u32).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("slice_x", cfg.slice_x).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("slice_y", cfg.slice_y).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("slice_z", cfg.slice_z).unwrap();
+                match cfg.slice_mode {
+                    SliceMode::Off => {},
+                    SliceMode::X | SliceMode::Y | SliceMode::Z => {
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(cfg.slice_mode as u32 - 1)).enq().unwrap();
+                    },
+                    SliceMode::XZ => {
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 0u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(0)).enq().unwrap();
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 2u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(2)).enq().unwrap();
+                    },
+                    SliceMode::XYZ => {
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 0u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(0)).enq().unwrap();
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 1u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(1)).enq().unwrap();
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 2u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(2)).enq().unwrap();
+                    },
+                    SliceMode::YZ => {
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 1u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(1)).enq().unwrap();
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 2u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(2)).enq().unwrap();
+                    },
+                    SliceMode::XY => {
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 0u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(0)).enq().unwrap();
+                        graphics.kernel_graphics_field_slice.set_arg("slice_mode", 1u32+1).unwrap();
+                        graphics.kernel_graphics_field_slice.cmd().global_work_size(self.get_area(1)).enq().unwrap();
+                    },
+                }
+                
+            }
             if cfg.q_mode {
                 graphics.kernel_graphics_q.enq().unwrap();
             }
@@ -429,6 +503,7 @@ pub fn get_graphics_defines(graphics_config: &GraphicsConfig) -> String {
     +"\n	#define DEF_SCREEN_WIDTH "      + &graphics_config.camera_width.to_string()+"u"
     +"\n	#define DEF_SCREEN_HEIGHT "     + &graphics_config.camera_height.to_string()+"u"
     +"\n	#define DEF_SCALE_U "           + &format!("{:?}f", 1.0f32 / (0.57735027f32 * graphics_config.u_max))
+    +"\n	#define DEF_SCALE_RHO "         + &format!("{:?}f", 0.5f32 / graphics_config.rho_delta)
     +"\n	#define DEF_SCALE_Q_MIN "       + &graphics_config.q_min.to_string()+"f"
     +"\n	#define DEF_SCALE_F "           + &(1.0f32 / graphics_config.f_max).to_string()+"f"
     +"\n	#define DEF_STREAMLINE_SPARSE " + &graphics_config.streamline_every.to_string()+"u"
