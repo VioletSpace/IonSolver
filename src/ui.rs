@@ -3,6 +3,7 @@
 //! Simple gui interface for the simulation implemented with egui. Only supported in single-mode for now. 
 
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, sync::mpsc, thread};
 
@@ -66,10 +67,10 @@ impl SimControl {
     ) -> InnerResponse<InnerResponse<()>> {
         //egui styles
         let zeromargin = egui::Margin {
-            left: 0.0,
-            right: 0.0,
-            top: 0.0,
-            bottom: 0.0,
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
         };
         let frame = egui::Frame {
             fill: Color32::WHITE,
@@ -99,12 +100,8 @@ impl SimControl {
                     ui.style_mut().visuals.widgets.hovered.weak_bg_fill =
                         Color32::from_rgb(0xE5, 0xF3, 0xFF);
                     ui.style_mut().visuals.widgets.hovered.bg_stroke = blue_stroke;
-                    ui.style_mut().visuals.widgets.hovered.rounding = 0.0.into();
                     ui.style_mut().visuals.widgets.inactive.bg_stroke = transparent_stroke;
                     ui.style_mut().visuals.widgets.inactive.weak_bg_fill = Color32::WHITE;
-                    ui.style_mut().visuals.widgets.inactive.rounding = 0.0.into();
-                    ui.style_mut().visuals.widgets.active.rounding = 0.0.into();
-                    ui.style_mut().visuals.widgets.noninteractive.rounding = 0.0.into();
                     if ui
                         .add_sized(
                             [40., 18.],
@@ -210,16 +207,16 @@ impl App for SimControl {
 
         //egui styles
         let zeromargin = egui::Margin {
-            left: 0.0,
-            right: 0.0,
-            top: 0.0,
-            bottom: 0.0,
+            left: 0,
+            right: 0,
+            top: 0,
+            bottom: 0,
         };
         let small_left_margin = egui::Margin {
-            left: 0.0,
-            right: 0.0,
-            top: 1.0,
-            bottom: -1.0,
+            left: 0,
+            right: 0,
+            top: 1,
+            bottom: -1,
         };
         let mut frame = egui::Frame {
             fill: Color32::WHITE,
@@ -232,43 +229,49 @@ impl App for SimControl {
         self.draw_top_controls(ctx, _frame, &mut send_control);
 
         frame.outer_margin = zeromargin;
-        frame.fill = Color32::BLACK;
+        frame.fill = Color32::from_rgb(40, 40, 40);
         egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
             ui.style_mut().visuals.override_text_color = Some(Color32::WHITE);
-            match &self.display_img {
-                Some(img) => {
-                    let response = ui.image(img.id(), ui.available_size());
-                    let id = ui.id();
-                    let response = ui.interact(response.rect, id, Sense::click_and_drag());
-                    if response.dragged() {
-                        let delta = response.drag_delta();
-                        if delta != Vec2::ZERO {
-                            self.camera_rotation[0] += delta.x;
-                            self.camera_rotation[1] =
-                                (self.camera_rotation[1] - delta.y).clamp(-90.0, 90.0);
-                            send_control = true;
+            ui.vertical_centered_justified(|ui| {
+                match &self.display_img {
+                    Some(img) => {
+                        let response = ui.add(
+                            egui::Image::new(img)
+                                .fit_to_fraction(egui::vec2(1.0, 1.0))
+                        );
+                        let id = ui.id();
+                        let response = ui.interact(response.rect, id, Sense::click_and_drag());
+                        if response.dragged() {
+                            let delta = response.drag_delta();
+                            if delta != Vec2::ZERO {
+                                self.camera_rotation[0] += delta.x;
+                                self.camera_rotation[1] =
+                                    (self.camera_rotation[1] - delta.y).clamp(-90.0, 90.0);
+                                send_control = true;
+                            }
                         }
                     }
+                    None => {
+                        ui.style_mut()
+                            .text_styles
+                            .get_mut(&egui::TextStyle::Body)
+                            .unwrap()
+                            .size = 18.0;
+                        ui.with_layout(
+                            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                            |ui| {
+                                ui.label("Simulation Graphic Output");
+                                ui.add(Label::new("text"));
+                            },
+                        );
+                    }
                 }
-                None => {
-                    ui.style_mut()
-                        .text_styles
-                        .get_mut(&egui::TextStyle::Body)
-                        .unwrap()
-                        .size = 18.0;
-                    ui.with_layout(
-                        egui::Layout::centered_and_justified(egui::Direction::TopDown),
-                        |ui| {
-                            ui.label("Simulation Graphic Output");
-                            ui.add(Label::new("text"));
-                        },
-                    );
-                }
-            }
+            });
+            
             ui.input(|i| {
-                if i.scroll_delta != Vec2::ZERO {
+                if i.raw_scroll_delta != Vec2::ZERO {
                     self.camera_zoom = (self.camera_zoom
-                        + (self.camera_zoom * (i.scroll_delta.y * 0.001)))
+                        + (self.camera_zoom * (i.raw_scroll_delta.y * 0.001)))
                         .max(0.01);
                     send_control = true;
                 }
@@ -289,15 +292,15 @@ impl App for SimControl {
     }
 }
 
-pub fn load_icon(icon_bytes: &[u8]) -> Option<eframe::IconData> {
+pub fn load_icon(icon_bytes: &[u8]) -> Option<Arc<egui::IconData>> {
     if let Ok(image) = image::load_from_memory(icon_bytes) {
         let image = image.to_rgba8();
         let (width, height) = image.dimensions();
-        Some(eframe::IconData {
+        Some(Arc::new(egui::IconData {
             width,
             height,
             rgba: image.as_raw().to_vec(),
-        })
+        }))
     } else {
         None
     }
@@ -306,10 +309,16 @@ pub fn load_icon(icon_bytes: &[u8]) -> Option<eframe::IconData> {
 pub fn run_ui(sim_rx: Receiver<SimState>, ctrl_tx: Sender<SimControlTx>) {
     let icon_bytes = include_bytes!("../icons/IonSolver.png");
     let options = eframe::NativeOptions {
-        initial_window_size: Some(egui::vec2(1000.0, 650.0)),
-        follow_system_theme: false,
-        default_theme: Theme::Light,
-        icon_data: load_icon(icon_bytes.as_ref()),
+        viewport: egui::ViewportBuilder {
+            title: Some("IonSolver".into()),
+            maximized: Some(true),
+            icon: load_icon(icon_bytes),
+            ..Default::default()
+        },
+        //initial_window_size: Some(egui::vec2(1000.0, 650.0)),
+        //follow_system_theme: false,
+        //default_theme: Theme::Light,
+        //icon_data: load_icon(icon_bytes.as_ref()),
         ..Default::default()
     };
 
@@ -336,7 +345,7 @@ pub fn run_ui(sim_rx: Receiver<SimState>, ctrl_tx: Sender<SimControlTx>) {
     eframe::run_native(
         "IonSolver",
         options,
-        Box::new(|_| Box::<SimControl>::new(simcontrol)),
+        Box::new(|_| Ok(Box::<SimControl>::new(simcontrol))),
     )
     .expect("unable to open window");
 }

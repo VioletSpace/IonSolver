@@ -75,6 +75,8 @@ pub struct GraphicsConfig {
     pub flags_surface_mode: bool,
     /// Visualize coordinate system axes
     pub axes_mode: bool,
+    /// Visualize where the ECR condition is met
+    pub ecrc_mode: bool,
 
     // Configure rendering keyframed intervals with camera positions
     /// Activate rendering intervals:
@@ -103,6 +105,7 @@ impl GraphicsConfig {
             flags_mode: false,
             flags_surface_mode: false,
             axes_mode: false,
+            ecrc_mode: false,
             render_intervals: false,
             keyframes: vec![],
         }
@@ -125,6 +128,7 @@ pub struct Graphics {
     kernel_graphics_q: Kernel,
     kernel_graphics_q_field: Kernel,
     kernel_graphics_streamline: Kernel,
+    kernel_graphics_ecrc_met: Option<Kernel>,
 
     pub streamline_mode: bool,    // Draw streamline mode
     pub field_mode: bool,         // Draw field
@@ -134,6 +138,7 @@ pub struct Graphics {
     pub flags_mode: bool,         // Draw flags
     pub flags_surface_mode: bool, // Draw flags (surface)
     pub axes_mode: bool,          // Draw helper axes
+    pub ecrc_mode: bool,          // Draw ECR condition
 }
 
 impl Graphics {
@@ -144,6 +149,7 @@ impl Graphics {
         queue: &Queue,
         flags: &Buffer<u8>,
         u: &Buffer<f32>,
+        b: &Option<Buffer<f32>>,
         n_d: (u32, u32, u32),
     ) -> Graphics {
         let width =  lbm_config.graphics_config.camera_width;
@@ -151,12 +157,10 @@ impl Graphics {
         let n = n_d.0 as u64 * n_d.1 as u64 * n_d.2 as u64;
 
         info!("Allocating graphics buffers...");
-        let mut now = std::time::Instant::now();
         let bitmap =        buffer!(queue, [width, height], 0i32);
         let zbuffer =       buffer!(queue, [width, height], 0i32);
         let camera_params = buffer!(queue, 15, 0.0f32);
         bwrite!(camera_params, new_camera_params());
-        info!("Allocated graphics buffer in {}ms", now.elapsed().as_millis()); // Allocating Graphics Buffers
 
         let sln = match lbm_config.velocity_set {
             VelocitySet::D2Q9 => (lbm_config.n_x / lbm_config.graphics_config.streamline_every) as u64 * (lbm_config.n_y / lbm_config.graphics_config.streamline_every) as u64,
@@ -164,7 +168,6 @@ impl Graphics {
         };
 
         info!("Initializing graphics kernels...");
-        now = std::time::Instant::now();
         // Clear kernel
         let kernel_clear = kernel!(program, queue, "graphics_clear", bitmap.len(), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
 
@@ -176,7 +179,11 @@ impl Graphics {
         let kernel_graphics_q          = kernel!(program, queue, "graphics_q",            [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_q_field    = kernel!(program, queue, "graphics_q_field",      [n], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
-        info!("Initialized graphics kernels in {}ms", now.elapsed().as_millis()); // Initializing Graphics Kernels
+        let mut kernel_graphics_ecrc_met = None;
+
+        if lbm_config.ext_magneto_hydro {
+            kernel_graphics_ecrc_met = Some(kernel!(program, queue, "graphics_ecrc_met", [n], ("flags", flags), ("B", b.as_ref().expect("B")), ("ecrf", lbm_config.ecr_freq), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer)))
+        }
 
         Graphics {
             kernel_clear,
@@ -191,6 +198,7 @@ impl Graphics {
             kernel_graphics_q,
             kernel_graphics_q_field,
             kernel_graphics_streamline,
+            kernel_graphics_ecrc_met,
             vec_vis_mode: lbm_config.graphics_config.vec_vis_mode,
             streamline_mode: lbm_config.graphics_config.streamline_mode,
             field_mode: lbm_config.graphics_config.field_mode,
@@ -199,6 +207,7 @@ impl Graphics {
             flags_mode: lbm_config.graphics_config.flags_mode,
             flags_surface_mode: lbm_config.graphics_config.flags_surface_mode,
             axes_mode: lbm_config.graphics_config.axes_mode,
+            ecrc_mode: lbm_config.graphics_config.ecrc_mode
         }
     }
 }
@@ -363,6 +372,11 @@ impl domain::LbmDomain {
             }
             if graphics.flags_surface_mode {
                 graphics.kernel_graphics_flags_mc.enq().unwrap();
+            }
+            if graphics.ecrc_mode {
+                if self.cfg.ext_magneto_hydro {
+                    graphics.kernel_graphics_ecrc_met.as_ref().expect("kernel").enq().unwrap();
+                }
             }
         }
     }

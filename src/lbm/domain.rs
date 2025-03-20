@@ -5,7 +5,7 @@
 //! `LbmDomain` should not be initialized on it's own, but automatically through the `Lbm::new()` function when initializing a new [`Lbm`].
 //! This ensures all arguments are correctly set.
 
-use log::info;
+use log::{error, info};
 use ocl::{Buffer, Context, Device, Kernel, Platform, Program, Queue};
 use std::cmp;
 use crate::lbm::*;
@@ -24,11 +24,15 @@ pub struct LbmDomain {
     kernel_initialize: Kernel, // Basic Kernels
     kernel_stream_collide: Kernel,
     kernel_update_fields: Kernel,
+    pub kernel_voxelize_mesh: Kernel,
     pub transfer_kernels: [[Option<Kernel>; 2]; 4],
 
     kernel_update_e_b_dyn: Option<Kernel>, // Optional Kernels
     kernel_lod_part_2_gather: Option<Kernel>,
     kernel_clear_qu_lod: Option<Kernel>,
+    kernel_psi_from_mesh: Option<Kernel>,
+    kernel_static_b_from_mesh: Option<Kernel>,
+    kernel_static_e_from_mesh: Option<Kernel>,
 
     pub n_x: u32, // Domain size
     pub n_y: u32,
@@ -42,6 +46,10 @@ pub struct LbmDomain {
     pub rho: Buffer<f32>,
     pub u: Buffer<f32>,
     pub flags: Buffer<u8>,
+    pub p0: Buffer<f32>, // Triangle buffers
+    pub p1: Buffer<f32>,
+    pub p2: Buffer<f32>,
+    pub bbu: Buffer<f32>, // Mesh info
 
     pub transfer_p: Buffer<u8>, // Transfer buffers positive/negative
     pub transfer_m: Buffer<u8>, // Size is maximum of (17 bytes (rho, u and flags) or bytes needed for fi)
@@ -78,6 +86,8 @@ impl LbmDomain {
     /// This ensures all arguments are correctly set.
     #[rustfmt::skip]
     pub fn new(lbm_config: &LbmConfig, device: Device, x: u32, y: u32, z: u32, i: u32) -> LbmDomain {
+        
+        let dinit = std::time::Instant::now();
         let n_x = lbm_config.n_x / lbm_config.d_x + 2u32 * (lbm_config.d_x > 1u32) as u32; // Size + Halo offsets
         let n_y = lbm_config.n_y / lbm_config.d_y + 2u32 * (lbm_config.d_y > 1u32) as u32; // When multiple domains on axis -> add 2 cells of padding
         let n_z = lbm_config.n_z / lbm_config.d_z + 2u32 * (lbm_config.d_z > 1u32) as u32;
@@ -125,7 +135,13 @@ impl LbmDomain {
         let queue = Queue::new(&context, device, None).unwrap();
         info!("Compiling OpenCL code...");
         let mut now = std::time::Instant::now();
-        let program = Program::builder().devices(device).src(&ocl_code).build(&context).unwrap();
+        let program = match Program::builder().devices(device).src(&ocl_code).build(&context) {
+            Ok(pr) => pr,
+            Err(err) => { match err { ocl::Error::OclCore(error) => { match error { ocl::OclCoreError::ProgramBuild(pbe) => {
+                error!("{}", pbe.to_string());
+                panic!("Kernel program build error in LbmDomain::new(). Aborting."); }, _ => todo!(), } }, _ => todo!(),  } 
+            },
+        };
         info!("Compiled OpenCL code in {}ms", now.elapsed().as_millis()); // Compiling Program
 
 
@@ -140,6 +156,12 @@ impl LbmDomain {
         let rho =  buffer!(&queue, [n], 1.0f32);
         let u =    buffer!(&queue, [n * 3], 0f32);
         let flags = buffer!(&queue, [n], 0u8);
+
+        // Mesh buffers
+        let p0 = buffer!(&queue, 1, 0.0f32);
+        let p1 = buffer!(&queue, 1, 0.0f32);
+        let p2 = buffer!(&queue, 1, 0.0f32);
+        let bbu = buffer!(&queue, 16, 0.0f32);
 
         // VOLUME_FORCE extension
         // Force field buffer as 3D Vectors
@@ -192,29 +214,36 @@ impl LbmDomain {
 
         // Initialize Kernels
         info!("Initializing simulation kernels...");
-        now = std::time::Instant::now();
         let mut initialize_builder = kernel_builder!(program, queue, "initialize", [n]);
         let mut stream_collide_builder = kernel_builder!(program, queue, "stream_collide", [n]);
         let mut update_fields_builder = kernel_builder!(program, queue, "update_fields", [n]);
+        let mut voxelize_mesh_builder = kernel_builder!(program, queue, "voxelize_mesh", 1);
+        kernel_args!(voxelize_mesh_builder, ("direction", 0u32));
         let mut kernel_update_e_b_dyn: Option<Kernel> = None;
         let mut kernel_lod_part_2_gather: Option<Kernel> = None;
         let mut kernel_clear_qu_lod: Option<Kernel> = None;
+        let mut kernel_psi_from_mesh: Option<Kernel> = None;
+        let mut kernel_static_b_from_mesh: Option<Kernel> = None;
+        let mut kernel_static_e_from_mesh: Option<Kernel> = None;
         match &fi {
             //Initialize kernels. Different Float types need different arguments (Fi-Buffer specifically)
             VariableFloatBuffer::F32(fif32) => { // Float Type F32
                 kernel_args!(initialize_builder, ("fi", fif32));
                 kernel_args!(stream_collide_builder, ("fi", fif32));
                 kernel_args!(update_fields_builder, ("fi", fif32));
+                kernel_args!(voxelize_mesh_builder, ("fi", fif32));
             }
             VariableFloatBuffer::U16(fiu16) => { // Float Type F16S/F16C
                 kernel_args!(initialize_builder, ("fi", fiu16));
                 kernel_args!(stream_collide_builder, ("fi", fiu16));
                 kernel_args!(update_fields_builder, ("fi", fiu16));
+                kernel_args!(voxelize_mesh_builder, ("fi", fiu16));
             }
         }
         kernel_args!(initialize_builder,     ("rho", &rho), ("u", &u), ("flags", &flags));
         kernel_args!(stream_collide_builder, ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("fx", lbm_config.f_x), ("fy", lbm_config.f_y), ("fz", lbm_config.f_z));
         kernel_args!(update_fields_builder,  ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("fx", lbm_config.f_x), ("fy", lbm_config.f_y), ("fz", lbm_config.f_z));
+        kernel_args!(voxelize_mesh_builder,  ("rho", &rho), ("u", &u), ("flags", &flags), ("t", t), ("flag", 1u8), ("p0", &p0), ("p1", &p1), ("p2", &p2), ("bbu", &bbu));
 
         // Conditional arguments. Place at end of kernel functions
         if lbm_config.ext_force_field { kernel_args!(stream_collide_builder, ("F", f.as_ref().expect("F"))); }
@@ -234,17 +263,27 @@ impl LbmDomain {
 
             kernel_args!(initialize_builder,     ("Q", q.as_ref().expect("Q")));
             kernel_args!(stream_collide_builder, ("Q", q.as_ref().expect("Q")), ("QU_lod", qu_lod.as_ref().expect("QU_lod")));
+            kernel_args!(voxelize_mesh_builder,  ("mpc_x", 0.0f32), ("mpc_y", 0.0f32), ("mpc_z", 0.0f32), ("tmpF", b_dyn.as_ref().expect("msg")));
 
             // Dynamic E/B kernel
             kernel_update_e_b_dyn = Some(
                 kernel!(program, queue, "update_e_b_dynamic", [n], ("E_stat", e_stat.as_ref().expect("e_stat")), ("B_stat", b_stat.as_ref().expect("b_stat")), ("E_dyn", e_dyn.as_ref().expect("e_dyn")), ("B_dyn", b_dyn.as_ref().expect("b_dyn")), ("Q", q.as_ref().expect("q")), ("u", &u), ("QU_lod", qu_lod.as_ref().expect("QU_lod")), ("flags", &flags))
             );
             kernel_lod_part_2_gather = Some(
-                kernel!(program, queue, "lod_part_2_gather", 1, 0)
+                kernel!(program, queue, "lod_part_2_gather", 1, ("QU_lod", qu_lod.as_ref().expect("QU_lod")), ("depth", 0))
             );
             // Clear LOD
             kernel_clear_qu_lod = Some(
                 kernel!(program, queue, "clear_qu_lod", [n_lod], ("QU_lod", qu_lod.as_ref().expect("QU_lod")))
+            );
+            kernel_psi_from_mesh = Some(
+                kernel!(program, queue, "psi_from_mesh", [(n_x+2)*(n_y+2)*(n_z+2)], ("flags", &flags), ("psi", e_dyn.as_ref().expect("e_dyn")), ("M", b_dyn.as_ref().expect("b_dyn")))
+            );
+            kernel_static_b_from_mesh = Some(
+                kernel!(program, queue, "static_b_from_mesh", [n], ("flags", &flags), ("B", b_stat.as_ref().expect("b_stat")), ("psi", e_dyn.as_ref().expect("e_dyn")))
+            );
+            kernel_static_e_from_mesh = Some(
+                kernel!(program, queue, "static_e_from_mesh", [n], ("flags", &flags), ("E", e_stat.as_ref().expect("e_stat")), ("C", b_dyn.as_ref().expect("b_dyn")))
             );
         }
         if lbm_config.ext_subgrid_ecr {
@@ -263,13 +302,12 @@ impl LbmDomain {
         let kernel_stream_collide: Kernel = stream_collide_builder.build().unwrap();
         let kernel_initialize: Kernel = initialize_builder.build().unwrap();
         let kernel_update_fields: Kernel = update_fields_builder.build().unwrap();
-        info!("Initialized kernels in {}ms", now.elapsed().as_millis()); // Initializing Simulation Kernels
+        let kernel_voxelize_mesh: Kernel = voxelize_mesh_builder.build().unwrap();
 
 
         // Multi-Domain-Transfers:
         // Transfer buffer initializaton:
         info!("Initializing transfer buffers/kernels...");
-        now = std::time::Instant::now();
         let mut a_max: usize = 0;
         if lbm_config.d_x > 1 { a_max = cmp::max(a_max, n_y as usize * n_z as usize); } // Ax
         if lbm_config.d_y > 1 { a_max = cmp::max(a_max, n_x as usize * n_z as usize); } // Ay
@@ -328,12 +366,11 @@ impl LbmDomain {
                 } else { None }, // Insert Qi
             ], // Qi gas charge advection ddfs
         ];
-        info!("Initialized transfer buffers/kernels in {}ms", now.elapsed().as_millis());
 
 
-        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, (n_x, n_y, n_z))) } else { None };
+        let graphics: Option<graphics::Graphics> = if lbm_config.graphics_config.graphics_active { Some(graphics::Graphics::new(lbm_config, &program, &queue, &flags, &u, &b_stat, (n_x, n_y, n_z))) } else { None };
         
-        info!("Domain {} ready.", i);
+        info!("Domain {} ready after {}ms", i, dinit.elapsed().as_millis());
 
         LbmDomain {
             queue,
@@ -341,15 +378,20 @@ impl LbmDomain {
             kernel_initialize,
             kernel_stream_collide,
             kernel_update_fields,
+            kernel_voxelize_mesh,
             transfer_kernels,
 
             kernel_update_e_b_dyn,
             kernel_lod_part_2_gather,
             kernel_clear_qu_lod,
+            kernel_psi_from_mesh,
+            kernel_static_b_from_mesh,
+            kernel_static_e_from_mesh,
 
             n_x, n_y, n_z,
             fx: lbm_config.f_x, fy: lbm_config.f_y, fz: lbm_config.f_z,
             fi, rho, u, flags,
+            p0, p1, p2, bbu,
 
             transfer_p, transfer_m,
             transfer_p_host, transfer_m_host,
@@ -504,6 +546,19 @@ impl LbmDomain {
     /// Read own LODs into host buffer
     pub fn read_lods(&mut self) {
         self.qu_lod.as_ref().expect("msg").read(self.transfer_lod_host.as_mut().expect("msg")).len(self.n_lod_own*4).enq().unwrap();
+    }
+
+    pub fn enqueue_precompute_b(&mut self) {
+        unsafe {
+            self.kernel_psi_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+            self.kernel_static_b_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+        }
+    }
+
+    pub fn enqueue_precompute_e(&mut self) {
+        unsafe {
+            self.kernel_static_e_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+        }
     }
 
     #[allow(unused)]
@@ -731,8 +786,8 @@ fn get_device_defines(
     +"\n	#define TYPE_S  0x01" // 0b00000001 // (stationary or moving) solid boundary
     +"\n	#define TYPE_E  0x02" // 0b00000010 // equilibrium boundary (inflow/outflow)
     +"\n	#define TYPE_C  0x04" // 0b00000100 // changing electric field
-    +"\n	#define TYPE_F  0x08" // 0b00001000 // reserved type 1
-    +"\n	#define TYPE_I  0x10" // 0b00010000 // reserved type 2
+    +"\n	#define TYPE_F  0x08" // 0b00001000 // charged solid
+    +"\n	#define TYPE_M  0x10" // 0b00010000 // magnetic solid
     +"\n	#define TYPE_G  0x20" // 0b00100000 // reserved type 3
     +"\n	#define TYPE_X  0x40" // 0b01000000 // reserved type 4
     +"\n	#define TYPE_Y  0x80" // 0b10000000 // reserved type 5
@@ -749,9 +804,11 @@ fn get_device_defines(
      "\n	#define MAGNETO_HYDRO".to_owned()
     +"\n	#define DEF_KE "          + &format!("{:?}f", lbm_config.units.ke_lu()) // coulomb constant in simulation units
     +"\n	#define DEF_KMU "         + &format!("{:?}f", lbm_config.units.mu_0_lu() / (4.0 * std::f32::consts::PI))
+    +"\n	#define DEF_KMU0 "        + &format!("{:?}f", lbm_config.units.mu_0_lu())
     +"\n	#define DEF_KKGE  "       + &format!("{:?}f", lbm_config.units.kkge_lu()) // electron mass/charge in simulation units
     +"\n	#define DEF_KIMG  "       + &format!("{:?}f", lbm_config.units.kimg_lu()) // Inverse of mass of a propellant gas atom, scaled by 10^20
     +"\n	#define DEF_KVEV  "       + &format!("{:?}f", lbm_config.units.kveV_lu()) // 9.10938356e-31kg / (2*1.6021766208e-19)
+    +"\n	#define DEF_KME  "       + &format!("{:?}f", lbm_config.units.kme()) // 9.10938356e-31kg / (2*1.6021766208e-19)
     +"\n	#define DEF_LOD_DEPTH "   + &format!("{}u", lbm_config.mhd_lod_depth)
     +"\n    #define DEF_NUM_LOD "     + &format!("{}u", n_lod)
     +"\n    #define DEF_NUM_LOD_OWN " + &format!("{}u", n_lod_own)

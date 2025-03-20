@@ -132,6 +132,10 @@ impl Units {
         q / (self.a * self.s)
     }
 
+    pub fn magnetization_si_lu(&self, m: f32) -> f32 {
+        m / (self.a / self.m)
+    }
+
     pub fn epsilon_0_lu(&self) -> f32 {
         // 8.8541878128E-12 F/m
         // Unit: F/m  ==  A * s / V * m  ==  A * s / (kg*m^2/s^3 * A) * m  ==  s^4 * A^2 / kg * m^3
@@ -176,6 +180,10 @@ impl Units {
 
     pub fn keabs_lu(&self) -> f32 { // -1.5 * 1.38064852e-23J/K / 9.10938356e-31kg -- m^2 * s^-2 * K^-1
         (1.40897016100511360652E-8_f64 / (sqd(self.a as f64) * sqd(self.s as f64) / self.kg as f64 ) ) as f32
+    }
+
+    pub fn kme(&self) -> f32 {
+        (5.68563006E-12_f64 / (self.kg as f64 / (self.a as f64 * self.s as f64))) as f32
     }
 
     /// From lbm.n_x and velocity u

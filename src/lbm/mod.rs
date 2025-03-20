@@ -17,15 +17,15 @@ mod domain;
 pub mod graphics;
 #[cfg(feature = "multi-node")]
 pub mod multi_node;
-pub mod precompute;
 mod units;
 mod types;
 
 use crate::opencl;
-use {domain::LbmDomain, graphics::GraphicsConfig};
+pub use {domain::LbmDomain, graphics::GraphicsConfig};
 use log::{info, warn};
 pub use types::*;
 pub use units::Units;
+use crate::mesh::Mesh;
 
 // Helper Functions
 /// Get `x, y, z` coordinates from 1D index `n` and side lengths `n_x` and `n_y`.
@@ -154,12 +154,8 @@ pub struct Lbm {
     pub domains: Vec<LbmDomain>,
     /// A copy of the [`LbmConfig`] used to initialize the simulation.
     pub config: LbmConfig,
-    /// A vector of Charges positioned in the simulation via a 1D index. Used in static field computation. 
-    pub charges: Option<Vec<(u64, f32)>>,
-    /// A vector of Magnets positioned in the simulation via a 1D index. Used in static field computation. 
-    pub magnets: Option<Vec<(u64, [f32; 3])>>,
-    /// A vector of Charges positioned in the simulation via a 1D index. Used in variable field computation. 
-    pub charges_var: Option<Vec<(u64, f32)>>,
+    /// Imported meshes
+    pub meshes: Vec<Mesh>,
     initialized: bool,
 }
 
@@ -208,9 +204,7 @@ impl Lbm {
         Lbm {
             domains: lbm_domains,
             config: lbm_config,
-            charges: None,
-            magnets: None,
-            charges_var: None,
+            meshes: vec![],
             initialized: false,
         }
     }
@@ -281,6 +275,35 @@ impl Lbm {
     pub fn finish_queues(&self) {
         for d in 0..self.domains.len() {
             self.domains[d].queue.finish().unwrap();
+        }
+    }
+
+    /// Computes the static magnetic field from imported magnet type meshes. This is only available with the
+    /// magneto_hydro extension and needs to be called before the simulation initialization.
+    #[allow(unused)]
+    pub fn precompute_B(&mut self) {
+        if self.config.ext_magneto_hydro {
+            info!("Calculating mesh magnetic field, this may take a while");
+            for d in &mut self.domains {
+                d.enqueue_precompute_b();
+            }
+        } else {
+            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
+        }
+        
+    }
+
+    /// Computes the static electric field from imported charged type meshes. This is only available with the
+    /// magneto_hydro extension and needs to be called before the simulation initialization.
+    #[allow(unused)]
+    pub fn precompute_E(&mut self) {
+        if self.config.ext_magneto_hydro {
+            info!("Calculating mesh electric field, this may take a while");
+            for d in &mut self.domains {
+                d.enqueue_precompute_e();
+            }
+        } else {
+            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
         }
     }
 

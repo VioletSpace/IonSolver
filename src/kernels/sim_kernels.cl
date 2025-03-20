@@ -19,6 +19,10 @@
 #define DEF_AY 1u
 #define DEF_AZ 1u
 
+#define DEF_OX 1u
+#define DEF_OY 1u
+#define DEF_OZ 1u
+
 #define D "D2Q9" // D2Q9/D3Q15/D3Q19/D3Q27
 #define DEF_VELOCITY_SET 9u // LBM velocity set (D2Q9/D3Q15/D3Q19/D3Q27)
 #define DEF_DIMENSIONS 2u // number spatial dimensions (2D or 3D)
@@ -32,6 +36,7 @@
 #define DEF_KE 8.9875517923E9f
 #define DEF_KMU 0.0f
 #define def_ind_r 5 // Range of induction fill around cell
+#define DEF_KMU0 0.0f
 #define DEF_WQ 0.1f
 #define DEF_KKGE 1.0f // Constant mass/charge for an electron
 #define DEF_KIMG 1.0f // Inverse of mass of a propellant gas atom, scaled by 10^20
@@ -40,8 +45,8 @@
 #define TYPE_S  0x01 // 0b00000001 // (stationary or moving) solid boundary
 #define TYPE_E  0x02 // 0b00000010 // equilibrium boundary (inflow/outflow)
 #define TYPE_C  0x04 // 0b00000100 // changing electric field
-#define TYPE_F  0x08 // 0b00001000 // reserved type 1
-#define TYPE_I  0x10 // 0b00010000 // reserved type 2
+#define TYPE_F  0x08 // 0b00001000 // charged solid
+#define TYPE_M  0x10 // 0b00010000 // magnetic solid
 #define TYPE_G  0x20 // 0b00100000 // reserved type 3
 #define TYPE_X  0x40 // 0b01000000 // reserved type 4
 #define TYPE_Y  0x80 // 0b10000000 // reserved type 5
@@ -1124,5 +1129,160 @@ kernel void transfer__insert_fqi(const uint direction, const ulong t, const glob
 	if(a>=A) return; // area might not be a multiple of def_workgroup_size, so return here to avoid writing in unallocated memory space
 	insert_fqi(a, index_insert_p(a, direction), 2u*direction+0u, t, (const global fpxx_copy*)transfer_buffer_p, fqi);
 	insert_fqi(a, index_insert_m(a, direction), 2u*direction+1u, t, (const global fpxx_copy*)transfer_buffer_m, fqi);
+}
+#endif // MAGNETO_HYDRO
+
+kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global float* rho, global float* u, global uchar* flags, const ulong t, const uchar flag, const global float* p0, const global float* p1, const global float* p2, const global float* bbu
+#ifdef MAGNETO_HYDRO
+, const float mpc_x // magnetization per cell
+, const float mpc_y
+, const float mpc_z
+, global float* B_dyn
+#endif
+){ // voxelize triangle mesh
+	const uint a=get_global_id(0), A=get_area(direction); // a = domain area index for each side, A = area of the domain boundary
+	if(a>=A) return; // area might not be a multiple of def_workgroup_size, so return here to avoid writing in unallocated memory space
+	const uint triangle_number = as_uint(bbu[0]);
+	const float x0=bbu[ 1], y0=bbu[ 2], z0=bbu[ 3], x1=bbu[ 4], y1=bbu[ 5], z1=bbu[ 6];
+	const float cx=bbu[ 7], cy=bbu[ 8], cz=bbu[ 9], ux=bbu[10], uy=bbu[11], uz=bbu[12], rx=bbu[13], ry=bbu[14], rz=bbu[15];
+	const uint3 xyz = 
+		direction==0u ? 
+			(uint3)((uint)clamp((int)x0-DEF_OX, 0, (int)DEF_NX-1), a%DEF_NY, a/DEF_NY)
+			: direction==1u ?
+				(uint3)(a/DEF_NZ, (uint)clamp((int)y0-DEF_OY, 0, (int)DEF_NY-1), a%DEF_NZ)
+				: (uint3)(a%DEF_NX, a/DEF_NX, (uint)clamp((int)z0-DEF_OZ, 0, (int)DEF_NZ-1));
+	const float3 offset = (float3)(0.5f*(float)((int)DEF_NX+2*DEF_OX)-0.5f, 0.5f*(float)((int)DEF_NY+2*DEF_OY)-0.5f, 0.5f*(float)((int)DEF_NZ+2*DEF_OZ)-0.5f);
+	const float3 r_origin = position(xyz)+offset;
+	const float3 r_direction = (float3)((float)(direction==0u), (float)(direction==1u), (float)(direction==2u));
+	uint intersections=0u, intersections_check=0u;
+	ushort distances[64]; // allow up to 64 mesh intersections
+	const bool condition = direction==0u ? r_origin.y<y0||r_origin.z<z0||r_origin.y>=y1||r_origin.z>=z1 : direction==1u ? r_origin.x<x0||r_origin.z<z0||r_origin.x>=x1||r_origin.z>=z1 : r_origin.x<x0||r_origin.y<y0||r_origin.x>=x1||r_origin.y>=y1;
+
+	if(condition) return; // don't use local memory (~25% slower, but this also runs on old OpenCL 1.0 GPUs)
+	for(uint i=0u; i<triangle_number; i++) {
+		const uint tx=3u*i, ty=tx+1u, tz=ty+1u;
+		const float3 p0i = (float3)(p0[tx], p0[ty], p0[tz]);
+		const float3 p1i = (float3)(p1[tx], p1[ty], p1[tz]);
+		const float3 p2i = (float3)(p2[tx], p2[ty], p2[tz]);
+		const float3 u=p1i-p0i, v=p2i-p0i, w=r_origin-p0i, h=cross(r_direction, v), q=cross(w, u); // bidirectional ray-triangle intersection (Moeller-Trumbore algorithm)
+		const float f=1.0f/dot(u, h), s=f*dot(w, h), t=f*dot(r_direction, q), d=f*dot(v, q);
+		if(s>=0.0f&&s<1.0f&&t>=0.0f&&s+t<1.0f) { // ray-triangle intersection ahead or behind
+			if(d>0.0f) { // ray-triangle intersection ahead
+				if(intersections<64u&&d<65536.0f) distances[intersections] = (ushort)d; // store distance to intersection in array as ushort
+				intersections++;
+			} else { // ray-triangle intersection behind
+				intersections_check++; // cast a second ray to check if starting point is really inside (error correction)
+			}
+		}
+	}
+
+	for(int i=1; i<(int)intersections; i++) { // insertion-sort distances
+		ushort t = distances[i];
+		int j = i-1;
+		while(distances[j]>t&&j>=0) {
+			distances[j+1] = distances[j];
+			j--;
+		}
+		distances[j+1] = t;
+	}
+
+	bool inside = (intersections%2u)&&(intersections_check%2u);
+	uint intersection = intersections%2u!=intersections_check%2u; // iterate through column, start with 0 regularly, start with 1 if forward and backward intersection count evenness differs (error correction)
+	const uint h0 = direction==0u ? xyz.x : direction==1u ? xyz.y : xyz.z;
+	const uint hmax = direction==0u ? (uint)clamp((int)x1-DEF_OX, 0, (int)DEF_NX) : direction==1u ? (uint)clamp((int)y1-DEF_OY, 0, (int)DEF_NY) : (uint)clamp((int)z1-DEF_OZ, 0, (int)DEF_NZ);
+	const uint hmesh = h0+(uint)distances[min(intersections-1u, 63u)]; // clamp (intersections-1u) to prevent array out-of-bounds access
+	for(uint h=h0; h<hmax; h++) {
+		while(intersection<intersections&&h>h0+(uint)distances[min(intersection, 63u)]) { // clamp intersection to prevent array out-of-bounds access
+			inside = !inside; // passed mesh intersection, so switch inside/outside state
+			intersection++;
+		}
+		inside = inside&&(intersection<intersections&&h<hmesh); // point must be outside if there are no more ray-mesh intersections ahead (error correction)
+		const ulong n = index((uint3)(direction==0u?h:xyz.x, direction==1u?h:xyz.y, direction==2u?h:xyz.z));
+		uchar flagsn = flags[n];
+		if(inside) {
+			flagsn = (flagsn&~TYPE_BO)|flag;
+			#ifdef MAGNETO_HYDRO
+			if (flag&TYPE_M) { // magnetised solid, add magnetisation to b_dyn 
+				B_dyn[          (ulong)n] = mpc_x;
+				B_dyn[    DEF_N+(ulong)n] = mpc_y;
+				B_dyn[2ul*DEF_N+(ulong)n] = mpc_z;
+			} else if (flag&TYPE_F) { // charged solid, add charge to b_dyn 
+				B_dyn[          (ulong)n] = mpc_x;
+			}
+			#endif // MAGNETO_HYDRO
+		} else {
+			flagsn = (flagsn&TYPE_BO)==TYPE_MS ? flagsn&~TYPE_MS : flagsn&~flag;
+		}
+		flags[n] = flagsn;
+	}
+} // voxelize_mesh()
+
+#ifdef MAGNETO_HYDRO
+kernel void psi_from_mesh(const global uchar* flags, global float* psi, const global float* M) { // Psi field reuses the E_dyn buffer, M field reuses B_dyn buffer
+	const uint n = get_global_id(0);
+	const float3 c = convert_float3(coordinates_sl(n, DEF_NX+2, DEF_NY+2)); // coordinate in simulation, psi field is padded by 1 on each side
+	float psic = 0.0f; // psi at cell
+
+	for (int i = 0; i < DEF_N; i++) { // Iterate over every cell in simulation
+		if (flags[i]&TYPE_M) { // cell is magnet
+			const float3 cdiff = c - convert_float3(coordinates(i) + (uint3)(1, 1, 1));
+			const float l = length(cdiff);
+			if (!(l == 0.0f)) {
+				const float3 mag = (float3)(M[i], M[i+DEF_N], M[i+DEF_N*2]);
+				psic += dot(cdiff, mag) / cb(l);
+			}
+		}
+	}
+
+	psi[n] = psic / (4.0f * M_PI);
+}
+
+float3 nabla(const global float* v, const uint l0, const uint l1, const uint3 c) {
+	const uint n = c.x + (c.y + c.z * l1) * l0;
+	const uint yOff = l0;
+	const uint zOff = l0 * l1;
+
+	return (float3)(
+		(v[n+1   ] - v[n-1   ]) / 2.0f,
+		(v[n+yOff] - v[n-yOff]) / 2.0f,
+		(v[n+zOff] - v[n-zOff]) / 2.0f
+	);
+}
+
+kernel void static_b_from_mesh(const global uchar* flags, global float* B, const global float* psi) { // Psi field reuses the E_dyn buffer
+	const uint n = get_global_id(0);
+	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute static_b_from_mesh() on halo
+	if((flags[n]&TYPE_BO)==TYPE_S) return; // if cell is solid boundary or gas, just return
+
+	const uint3 c = coordinates(n);
+	const float3 Bc = -DEF_KMU0 * nabla(psi, DEF_NX+2, DEF_NY+2, c + (uint3)(1, 1, 1));
+
+	B[(ulong)n         ] += Bc.x;
+	B[(ulong)n+DEF_N   ] += Bc.y;
+	B[(ulong)n+DEF_N*2u] += Bc.z;
+}
+
+kernel void static_e_from_mesh(const global uchar* flags, global float* E, const global float* C) { // Psi field reuses the E_dyn buffer
+	const uint n = get_global_id(0);
+	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute static_e_from_mesh() on halo
+	if((flags[n]&TYPE_BO)==TYPE_S) return; // if cell is solid boundary or gas, just return
+
+	const float3 c = convert_float3(coordinates(n));
+	float3 Ec = (float3)(0.0f, 0.0f, 0.0f);
+
+	for (int i = 0; i < DEF_N; i++) { // Iterate over every cell in simulation
+		if (flags[i]&TYPE_F) { // cell is charge
+			const float3 cdiff = c - convert_float3(coordinates(i));
+			const float l = length(cdiff);
+			if (!(l == 0.0f)) {
+				const float3 charge = C[i];
+				Ec += cdiff * charge / cb(l);
+			}
+		}
+	}
+
+	E[(ulong)n         ] += Ec.x;
+	E[(ulong)n+DEF_N   ] += Ec.y;
+	E[(ulong)n+DEF_N*2u] += Ec.z;
 }
 #endif // MAGNETO_HYDRO
