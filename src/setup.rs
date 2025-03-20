@@ -53,7 +53,8 @@ pub fn setup() -> Lbm {
     //setup_field_vis()
     //setup_ecr_test()
     //setup_mesh_test()
-    setup_mesh_field_test()
+    //setup_mesh_field_test()
+    setup_deeva_test()
 
     //let now = std::time::Instant::now();
     //lbm.run(10);
@@ -355,13 +356,58 @@ fn setup_mesh_field_test() -> Lbm {
     //lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 10000.0, 0.0)});
 
     // Thruster geometry
-    lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    //lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
     lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    lbm.import_mesh("stl/ring-magnet.stl", 1270.0, 64.1, 64.1, 64.0, 0.0, 0.0, 0.0);
     lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
-    lbm.precompute_B();
+    //lbm.precompute_B();
 
     lbm.domains[0].dump_cell(((200 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
+
+    lbm
+}
+
+fn setup_deeva_test() -> Lbm {
+    let mut cfg = LbmConfig::new();
+    cfg.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
+    cfg.n_x = 128;
+    cfg.n_y = 256;
+    cfg.n_z = 128;
+    cfg.nu = cfg.units.nu_si_lu(0.05);
+    cfg.velocity_set = VelocitySet::D3Q19;
+    cfg.ecr_freq = cfg.units.time_lu_si(2.45E9); // 2.45 gigahertz
+    // Extensions
+    cfg.ext_volume_force = true;
+    cfg.ext_magneto_hydro = true;
+    // Graphics
+    cfg.graphics_config.graphics_active = true;
+    cfg.graphics_config.streamline_every = 8;
+    cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
+    cfg.graphics_config.u_max = 0.00003;
+    cfg.graphics_config.streamline_mode = true;
+    cfg.graphics_config.streamline_every = 16;
+    cfg.graphics_config.axes_mode = true;
+    cfg.graphics_config.flags_surface_mode = true;
+    cfg.graphics_config.flags_mode = false;
+    cfg.graphics_config.ecrc_mode = true;
+    let mut lbm = Lbm::new(cfg);
+    
+
+    // Thruster geometry
+    //lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    //lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
+    lbm.import_mesh("stl/deeva_disk_magnet.stl", 1270.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_inlet.stl", 1270.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_quartz_tube.stl", 1270.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_ring_magnet.stl", 1270.0, 64.001, -0.5, 64.0, 0.0, 0.0, 0.0);
+    lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
+    lbm.voxelise_mesh(1, mesh::ModelType::Solid);
+    lbm.voxelise_mesh(2, mesh::ModelType::Solid);
+    lbm.voxelise_mesh(3, mesh::ModelType::Magnet {magnetization: (0.0, 500000.0, 0.0)});
+    lbm.precompute_B();
+
+    lbm.domains[0].dump_cell((64 + (50 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
 
     lbm
 }
