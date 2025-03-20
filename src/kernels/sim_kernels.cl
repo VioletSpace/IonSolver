@@ -1251,11 +1251,38 @@ float3 nabla(const global float* v, const uint l0, const uint l1, const uint3 c)
 
 kernel void static_b_from_mesh(const global uchar* flags, global float* B, const global float* psi) { // Psi field reuses the E_dyn buffer
 	const uint n = get_global_id(0);
+	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute static_b_from_mesh() on halo
+	if((flags[n]&TYPE_BO)==TYPE_S) return; // if cell is solid boundary or gas, just return
+
 	const uint3 c = coordinates(n);
 	const float3 Bc = -DEF_KMU0 * nabla(psi, DEF_NX+2, DEF_NY+2, c + (uint3)(1, 1, 1));
 
 	B[(ulong)n         ] += Bc.x;
 	B[(ulong)n+DEF_N   ] += Bc.y;
 	B[(ulong)n+DEF_N*2u] += Bc.z;
+}
+
+kernel void static_e_from_mesh(const global uchar* flags, global float* E, const global float* C) { // Psi field reuses the E_dyn buffer
+	const uint n = get_global_id(0);
+	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute static_e_from_mesh() on halo
+	if((flags[n]&TYPE_BO)==TYPE_S) return; // if cell is solid boundary or gas, just return
+
+	const float3 c = convert_float3(coordinates(n));
+	float3 Ec = (float3)(0.0f, 0.0f, 0.0f);
+
+	for (int i = 0; i < DEF_N; i++) { // Iterate over every cell in simulation
+		if (flags[i]&TYPE_F) { // cell is charge
+			const float3 cdiff = c - convert_float3(coordinates(i));
+			const float l = length(cdiff);
+			if (!(l == 0.0f)) {
+				const float3 charge = C[i];
+				Ec += cdiff * charge / cb(l);
+			}
+		}
+	}
+
+	E[(ulong)n         ] += Ec.x;
+	E[(ulong)n+DEF_N   ] += Ec.y;
+	E[(ulong)n+DEF_N*2u] += Ec.z;
 }
 #endif // MAGNETO_HYDRO

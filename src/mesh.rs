@@ -1,6 +1,5 @@
 use log::{error, info};
 use ocl_macros::*;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 use crate::{file::ByteStream, lbm::{Lbm, LbmDomain}};
 use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
@@ -9,7 +8,7 @@ use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
 pub enum ModelType {
     Solid,
     Magnet {magnetization: (f32, f32, f32)},
-    Charged,
+    Charged {charge: f32},
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -298,7 +297,7 @@ impl LbmDomain {
         let flag: u8 = match ctype {
             ModelType::Solid => 0b00000001,
             ModelType::Magnet { magnetization: _ } => 0b00010001,
-            ModelType::Charged => 0b00001001,
+            ModelType::Charged { charge: _ } => 0b00001001,
         };
 
         self.kernel_voxelize_mesh.set_arg("direction", direction).unwrap();
@@ -315,24 +314,15 @@ impl LbmDomain {
                     self.kernel_voxelize_mesh.set_arg("mpc_y", self.cfg.units.magnetization_si_lu(magnetization.1)).unwrap();
                     self.kernel_voxelize_mesh.set_arg("mpc_z", self.cfg.units.magnetization_si_lu(magnetization.2)).unwrap();
                 },
+                ModelType::Charged { charge } => {
+                    self.kernel_voxelize_mesh.set_arg("mpc_x", self.cfg.units.charge_si_lu(charge)).unwrap();
+                }
                 _ => {}
             }
             self.kernel_voxelize_mesh.set_arg("tmpF", self.b_dyn.as_ref().expect("msg")).unwrap();
         }
         unsafe {
             self.kernel_voxelize_mesh.cmd().global_work_size(a[direction as usize]).enq().unwrap();
-        }
-        if self.cfg.ext_magneto_hydro {
-            match ctype {
-                ModelType::Magnet { magnetization: _ } => {
-                    info!("Calculating mesh magnetic field, this may take a while");
-                    unsafe {
-                        self.kernel_psi_from_mesh.as_ref().expect("kernel").enq().unwrap();
-                        self.kernel_static_b_from_mesh.as_ref().expect("kernel").enq().unwrap();
-                    }
-                },
-                _ => {}
-            }
         }
     }
 }

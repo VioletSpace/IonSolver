@@ -103,7 +103,7 @@ fn decode(buffer: &[u8], config: &mut LbmConfig) -> Result<Lbm, String> {
 
     config.mhd_lod_depth = stream.next_u8();
 
-    let mut lbm = Lbm::new(config.to_owned());
+    let lbm = Lbm::new(config.to_owned());
 
     let d_total = lbm.config.d_x * lbm.config.d_y * lbm.config.d_z;
     let d_n = (lbm.config.n_x / lbm.config.d_x) * (lbm.config.n_y / lbm.config.d_y) * (lbm.config.n_z / lbm.config.d_z);
@@ -163,7 +163,7 @@ fn decode(buffer: &[u8], config: &mut LbmConfig) -> Result<Lbm, String> {
         static_charges.push(static_charge);
     }
 
-    lbm.charges = Some(static_charges);
+    //lbm.charges = Some(static_charges);
 
     // static magnets
     let n_magnets = stream.next_u32();
@@ -178,7 +178,7 @@ fn decode(buffer: &[u8], config: &mut LbmConfig) -> Result<Lbm, String> {
         static_magnets.push(static_magnet);
     }
 
-    lbm.magnets = Some(static_magnets);
+    //lbm.magnets = Some(static_magnets);
 
     if !stream.at_end() {
         return Err("Not all data could be read, file may be corrupted.".to_owned());
@@ -277,30 +277,30 @@ fn encode(lbm: &Lbm) -> Vec<u8> {
     // static charges and magnets
     
     // static charges
-    if lbm.charges.is_none() {
-        buffer.push32(0);
-    } else {
-        let charges_temp = lbm.charges.as_ref().unwrap();
-        buffer.push32(charges_temp.len() as u32);
-        for charge in charges_temp {
-            buffer.push64(charge.0);
-            buffer.push32(charge.1.to_bits()); // charge
-        }
-    }
+    //if lbm.charges.is_none() {
+    //    buffer.push32(0);
+    //} else {
+    //    let charges_temp = lbm.charges.as_ref().unwrap();
+    //    buffer.push32(charges_temp.len() as u32);
+    //    for charge in charges_temp {
+    //        buffer.push64(charge.0);
+    //        buffer.push32(charge.1.to_bits()); // charge
+    //    }
+    //}
 
     // static magnets
-    if lbm.magnets.is_none() {
-        buffer.push32(0);
-    } else {
-        let magnets_temp = lbm.magnets.as_ref().unwrap();
-        buffer.push32(magnets_temp.len() as u32);
-        for magnet in magnets_temp {
-            buffer.push64(magnet.0);
-            buffer.push32(magnet.1[0].to_bits()); // magnetization x
-            buffer.push32(magnet.1[1].to_bits()); // magnetization y
-            buffer.push32(magnet.1[2].to_bits()); // magnetization z
-        }
-    }
+    //if lbm.magnets.is_none() {
+    //    buffer.push32(0);
+    //} else {
+    //    let magnets_temp = lbm.magnets.as_ref().unwrap();
+    //    buffer.push32(magnets_temp.len() as u32);
+    //    for magnet in magnets_temp {
+    //        buffer.push64(magnet.0);
+    //        buffer.push32(magnet.1[0].to_bits()); // magnetization x
+    //        buffer.push32(magnet.1[1].to_bits()); // magnetization y
+    //        buffer.push32(magnet.1[2].to_bits()); // magnetization z
+    //    }
+    //}
 
     buffer
 }

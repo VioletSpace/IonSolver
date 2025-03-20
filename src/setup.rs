@@ -189,9 +189,9 @@ fn setup_bfield_spin() -> Lbm {
         vec_m.push((i * 68 + 2097152 * 2, [0.0, 0.0, 100000000000000000.0]));
     }
 
-    lbm.magnets = Some(vec_m);
-    precompute::precompute_B(&lbm);
-    precompute::precompute_E(&lbm);
+    //lbm.magnets = Some(vec_m);
+    //precompute::precompute_B(&lbm);
+    //precompute::precompute_E(&lbm);
 
     lbm.setup_velocity_field((0.1, 0.01, 0.0), 1.0);
 
@@ -269,8 +269,8 @@ fn setup_field_vis() -> Lbm {
     for i in 0..40 {
         vec_m.push((127 - 20 + i + 32768 + 8388608, [1000000000.0f32, 0.0f32, 0.0f32]));
     }
-    lbm.magnets = Some(vec_m);
-    precompute::precompute_B(&lbm);
+    //lbm.magnets = Some(vec_m);
+    //precompute::precompute_B(&lbm);
 
     lbm
 }
@@ -337,9 +337,10 @@ fn setup_mesh_field_test() -> Lbm {
     cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
     cfg.graphics_config.u_max = 0.00002;
     cfg.graphics_config.streamline_mode = true;
+    cfg.graphics_config.streamline_every = 16;
     cfg.graphics_config.axes_mode = true;
-    cfg.graphics_config.flags_surface_mode = false;
-    cfg.graphics_config.flags_mode = true;
+    cfg.graphics_config.flags_surface_mode = true;
+    cfg.graphics_config.flags_mode = false;
     cfg.graphics_config.ecrc_mode = true;
     let mut lbm = Lbm::new(cfg);
 
@@ -358,6 +359,7 @@ fn setup_mesh_field_test() -> Lbm {
     lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
     lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
+    lbm.precompute_B();
 
     lbm.domains[0].dump_cell(((200 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
 

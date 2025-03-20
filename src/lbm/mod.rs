@@ -17,7 +17,6 @@ mod domain;
 pub mod graphics;
 #[cfg(feature = "multi-node")]
 pub mod multi_node;
-pub mod precompute;
 mod units;
 mod types;
 
@@ -157,12 +156,6 @@ pub struct Lbm {
     pub config: LbmConfig,
     /// Imported meshes
     pub meshes: Vec<Mesh>,
-    /// A vector of Charges positioned in the simulation via a 1D index. Used in static field computation. 
-    pub charges: Option<Vec<(u64, f32)>>,
-    /// A vector of Magnets positioned in the simulation via a 1D index. Used in static field computation. 
-    pub magnets: Option<Vec<(u64, [f32; 3])>>,
-    /// A vector of Charges positioned in the simulation via a 1D index. Used in variable field computation. 
-    pub charges_var: Option<Vec<(u64, f32)>>,
     initialized: bool,
 }
 
@@ -212,9 +205,6 @@ impl Lbm {
             domains: lbm_domains,
             config: lbm_config,
             meshes: vec![],
-            charges: None,
-            magnets: None,
-            charges_var: None,
             initialized: false,
         }
     }
@@ -285,6 +275,35 @@ impl Lbm {
     pub fn finish_queues(&self) {
         for d in 0..self.domains.len() {
             self.domains[d].queue.finish().unwrap();
+        }
+    }
+
+    /// Computes the static magnetic field from imported magnet type meshes. This is only available with the
+    /// magneto_hydro extension and needs to be called before the simulation initialization.
+    #[allow(unused)]
+    pub fn precompute_B(&mut self) {
+        if self.config.ext_magneto_hydro {
+            info!("Calculating mesh magnetic field, this may take a while");
+            for d in &mut self.domains {
+                d.enqueue_precompute_b();
+            }
+        } else {
+            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
+        }
+        
+    }
+
+    /// Computes the static electric field from imported charged type meshes. This is only available with the
+    /// magneto_hydro extension and needs to be called before the simulation initialization.
+    #[allow(unused)]
+    pub fn precompute_E(&mut self) {
+        if self.config.ext_magneto_hydro {
+            info!("Calculating mesh electric field, this may take a while");
+            for d in &mut self.domains {
+                d.enqueue_precompute_e();
+            }
+        } else {
+            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
         }
     }
 

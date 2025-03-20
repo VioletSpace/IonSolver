@@ -30,8 +30,9 @@ pub struct LbmDomain {
     kernel_update_e_b_dyn: Option<Kernel>, // Optional Kernels
     kernel_lod_part_2_gather: Option<Kernel>,
     kernel_clear_qu_lod: Option<Kernel>,
-    pub kernel_psi_from_mesh: Option<Kernel>,
-    pub kernel_static_b_from_mesh: Option<Kernel>,
+    kernel_psi_from_mesh: Option<Kernel>,
+    kernel_static_b_from_mesh: Option<Kernel>,
+    kernel_static_e_from_mesh: Option<Kernel>,
 
     pub n_x: u32, // Domain size
     pub n_y: u32,
@@ -223,6 +224,7 @@ impl LbmDomain {
         let mut kernel_clear_qu_lod: Option<Kernel> = None;
         let mut kernel_psi_from_mesh: Option<Kernel> = None;
         let mut kernel_static_b_from_mesh: Option<Kernel> = None;
+        let mut kernel_static_e_from_mesh: Option<Kernel> = None;
         match &fi {
             //Initialize kernels. Different Float types need different arguments (Fi-Buffer specifically)
             VariableFloatBuffer::F32(fif32) => { // Float Type F32
@@ -279,6 +281,9 @@ impl LbmDomain {
             );
             kernel_static_b_from_mesh = Some(
                 kernel!(program, queue, "static_b_from_mesh", [n], ("flags", &flags), ("B", b_stat.as_ref().expect("b_stat")), ("psi", e_dyn.as_ref().expect("e_dyn")))
+            );
+            kernel_static_e_from_mesh = Some(
+                kernel!(program, queue, "static_e_from_mesh", [n], ("flags", &flags), ("E", e_stat.as_ref().expect("e_stat")), ("C", b_dyn.as_ref().expect("b_dyn")))
             );
         }
         if lbm_config.ext_subgrid_ecr {
@@ -381,6 +386,7 @@ impl LbmDomain {
             kernel_clear_qu_lod,
             kernel_psi_from_mesh,
             kernel_static_b_from_mesh,
+            kernel_static_e_from_mesh,
 
             n_x, n_y, n_z,
             fx: lbm_config.f_x, fy: lbm_config.f_y, fz: lbm_config.f_z,
@@ -540,6 +546,19 @@ impl LbmDomain {
     /// Read own LODs into host buffer
     pub fn read_lods(&mut self) {
         self.qu_lod.as_ref().expect("msg").read(self.transfer_lod_host.as_mut().expect("msg")).len(self.n_lod_own*4).enq().unwrap();
+    }
+
+    pub fn enqueue_precompute_b(&mut self) {
+        unsafe {
+            self.kernel_psi_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+            self.kernel_static_b_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+        }
+    }
+
+    pub fn enqueue_precompute_e(&mut self) {
+        unsafe {
+            self.kernel_static_e_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+        }
     }
 
     #[allow(unused)]
