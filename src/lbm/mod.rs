@@ -283,12 +283,15 @@ impl Lbm {
     #[allow(unused)]
     pub fn precompute_B(&mut self) {
         if self.config.ext_magneto_hydro {
-            info!("Calculating mesh magnetic field, this may take a while");
+            info!("Calculating mesh magnetic field. (This may take a while)");
+            let now = std::time::Instant::now();
             for d in &mut self.domains {
                 d.enqueue_precompute_b();
             }
+            self.finish_queues();
+            info!("Calculated mesh magnetic field in {} s", now.elapsed().as_secs());
         } else {
-            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
+            warn!("Electromagnetic field computation is only available wit the magneto_hydro extension.")
         }
         
     }
@@ -298,12 +301,15 @@ impl Lbm {
     #[allow(unused)]
     pub fn precompute_E(&mut self) {
         if self.config.ext_magneto_hydro {
-            info!("Calculating mesh electric field, this may take a while");
+            info!("Calculating mesh electric field. (This may take a while)");
+            let now = std::time::Instant::now();
             for d in &mut self.domains {
                 d.enqueue_precompute_e();
             }
+            self.finish_queues();
+            info!("Calculated mesh electric field in {} s", now.elapsed().as_secs());
         } else {
-            warn!("Electromagnetic field computation is only available wit hthe magneto_hydro extension.")
+            warn!("Electromagnetic field computation is only available wit the magneto_hydro extension.")
         }
     }
 

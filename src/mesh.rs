@@ -256,12 +256,12 @@ impl Lbm {
         
         let tn = mesh.triangle_number;
 
-        info!("Voxelising mesh with {tn} triangles on device. (This may take a while)");
-        let now = Instant::now();
+        info!("Voxelising mesh with {tn} triangles on device.");
         
         for d in &mut self.domains {
             d.voxelize_mesh_on_device(mesh, ctype);
         }
+        self.finish_queues();
     }
 }
 
