@@ -334,6 +334,7 @@ pub fn write_config<P: AsRef<std::path::Path> + std::fmt::Display>(path: P, cfg:
 }
 
 /// Push different byte sizes to 8-Bit Buffer
+#[allow(unused)]
 pub trait ByteBuffer {
     fn push32(&mut self, x: u32);
     fn push64(&mut self, x: u64);

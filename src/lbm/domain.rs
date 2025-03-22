@@ -85,7 +85,7 @@ impl LbmDomain {
     /// `LbmDomain` should not be initialized on it's own, but automatically through the `Lbm::new()` function.
     /// This ensures all arguments are correctly set.
     #[rustfmt::skip]
-    pub fn new(lbm_config: &LbmConfig, device: Device, x: u32, y: u32, z: u32, i: u32) -> LbmDomain {
+    pub fn new(lbm_config: &mut LbmConfig, device: Device, x: u32, y: u32, z: u32, i: u32) -> LbmDomain {
         
         let dinit = std::time::Instant::now();
         let n_x = lbm_config.n_x / lbm_config.d_x + 2u32 * (lbm_config.d_x > 1u32) as u32; // Size + Halo offsets

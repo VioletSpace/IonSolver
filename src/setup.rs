@@ -320,6 +320,7 @@ fn setup_mesh_test() -> Lbm {
     lbm
 }
 
+#[allow(unused)]
 fn setup_mesh_field_test() -> Lbm {
     let mut cfg = LbmConfig::new();
     cfg.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
@@ -358,7 +359,7 @@ fn setup_mesh_field_test() -> Lbm {
     // Thruster geometry
     //lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
     lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
-    lbm.import_mesh("stl/ring-magnet.stl", 1270.0, 64.1, 64.1, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/ring-magnet.stl", 1.0, 64.1, 64.1, 64.0, 0.0, 0.0, 0.0);
     lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     lbm.voxelise_mesh(1, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     //lbm.precompute_B();
@@ -397,10 +398,10 @@ fn setup_deeva_test() -> Lbm {
     // Thruster geometry
     //lbm.import_mesh_reposition("stl/ring-magnet.stl", 64.1, 64.1, 64.0, 0.0, 0.0, 0.0, 127.0);
     //lbm.import_mesh_reposition("stl/disk-magnet.stl", 64.1, 246.1, 64.0, 0.0, 0.0, 0.0, 127.0);
-    lbm.import_mesh("stl/deeva_disk_magnet.stl", 1270.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
-    lbm.import_mesh("stl/deeva_inlet.stl", 1270.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
-    lbm.import_mesh("stl/deeva_quartz_tube.stl", 1270.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
-    lbm.import_mesh("stl/deeva_ring_magnet.stl", 1270.0, 64.001, -0.5, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_disk_magnet.stl", 1.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_inlet.stl", 1.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_quartz_tube.stl", 1.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_ring_magnet.stl", 1.0, 64.001, -0.5, 64.0, 0.0, 0.0, 0.0);
     lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     lbm.voxelise_mesh(1, mesh::ModelType::Solid);
     lbm.voxelise_mesh(2, mesh::ModelType::Solid);

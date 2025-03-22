@@ -191,7 +191,7 @@ impl Lbm {
             let z = d / (lbm_config.d_x * lbm_config.d_y);
             info!("Using \"{}\" for domain {}", device_infos[d as usize].name().unwrap(), d + 1);
             lbm_domains.push(LbmDomain::new(
-                &lbm_config,
+                &mut lbm_config,
                 device_infos[d as usize],
                 x,
                 y,

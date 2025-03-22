@@ -268,13 +268,13 @@ impl SimControl {
                     ui.end_row();
 
                     ui.label("Slice X");
-                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_x, 0..=128).suffix(" cells")).changed() {self.cfg_send = true;}
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_x, 0..=self.graphics_cfg.max_slice_x).suffix(" cells")).changed() {self.cfg_send = true;}
                     ui.end_row();
                     ui.label("Slice Y");
-                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_y, 0..=256).suffix(" cells")).changed() {self.cfg_send = true;}
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_y, 0..=self.graphics_cfg.max_slice_y).suffix(" cells")).changed() {self.cfg_send = true;}
                     ui.end_row();
                     ui.label("Slice Z");
-                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_z, 0..=128).suffix(" cells")).changed() {self.cfg_send = true;}
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_z, 0..=self.graphics_cfg.max_slice_z).suffix(" cells")).changed() {self.cfg_send = true;}
                     ui.end_row();
 
                     ui.label("Vorticity");

@@ -5,10 +5,12 @@ use crate::{file::ByteStream, lbm::{Lbm, LbmDomain}};
 use std::{f32::consts::PI, ops::{Add, AddAssign, Mul, Sub}, time::Instant};
 
 #[derive(Clone, Copy)]
+#[allow(unused)]
 pub enum ModelType {
     Solid,
     Magnet {magnetization: (f32, f32, f32)},
     Charged {charge: f32},
+    ChargedECR {charge: f32},
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -32,7 +34,7 @@ impl Default for F32_3 {
 
 #[derive(Debug, Clone, Copy)]
 /// 3D Matrix type
-struct F32_3_3 {
+pub struct F32_3_3 {
     xx: f32, yx: f32, zx: f32,
     xy: f32, yy: f32, zy: f32,
     xz: f32, yz: f32, zz: f32,
@@ -45,6 +47,7 @@ impl Default for F32_3_3 {
 }
 
 impl F32_3_3 {
+    /// Construct a rotation matrix from rx-z in radians
     fn construct_rotation_matrix(rx: f32, ry: f32, rz: f32) -> Self {
           Self::rotm_around_v(F32_3 {x: 1.0, y: 0.0, z: 0.0}, rx)
         * Self::rotm_around_v(F32_3 {x: 0.0, y: 1.0, z: 0.0}, ry)
@@ -218,21 +221,30 @@ impl Mesh {
 }
 
 impl Lbm {
-    /// Add an STL model as a mesh to the LBM
-    /// cx, cy, cz are center coordinates
-    /// rx, ry, rz are rotations in degrees
-    pub fn import_mesh(&mut self, path: &str, scale: f32, cx: f32, cy: f32, cz: f32, rx: f32, ry: f32, rz: f32) {
+    /// Add an STL model as a mesh to the LBM.
+    /// 
+    /// scale is the model scaling factor. It is expected that models are correctly scaled in SI units
+    /// already, SI unit to simulation unit conversion is performed automatically. If you want to import
+    /// a model with the inherent scaling, set scale to 1.
+    /// 
+    /// ox, oy, oz are the model origin coordinates in the simulation.
+    /// 
+    /// rx, ry, rz are rotations in degrees.
+    pub fn import_mesh(&mut self, path: &str, scale: f32, ox: f32, oy: f32, oz: f32, rx: f32, ry: f32, rz: f32) {
         let box_size = F32_3 {x: 1.0, y: 1.0, z: 1.0};
-        let center = F32_3 {x: cx, y: cy, z: cz};
+        let center = F32_3 {x: ox, y: oy, z: oz};
         let rot_matrix = F32_3_3::construct_rotation_matrix(rx * PI / 180.0, ry * PI / 180.0, rz * PI / 180.0);
-        //println!("{:?}", rot_matrix);
-        self.meshes.push(Mesh::read_stl_raw(path, false, box_size, center, rot_matrix, -scale.abs()));
+        let scale_lu = self.config.units.len_si_lu(scale);
+        self.meshes.push(Mesh::read_stl_raw(path, false, box_size, center, rot_matrix, -scale_lu.abs()));
     }
 
-    /// Add an STL model as a mesh to the LBM
-    /// cx, cy, cz are center coordinates
-    /// rx, ry, rz are rotations in degrees
-    /// size is the mesh size on its longest axis
+    /// Add an STL model as a mesh to the LBM.
+    /// 
+    /// cx, cy, cz are the model center coordinates in the simulation.
+    /// 
+    /// rx, ry, rz are rotations in degrees.
+    /// 
+    /// size is the mesh size in simulation units on its longest axis.
     pub fn import_mesh_reposition(&mut self, path: &str, cx: f32, cy: f32, cz: f32, rx: f32, ry: f32, rz: f32, size: f32) {
         let box_size = F32_3 {x: self.config.n_x as f32, y: self.config.n_y as f32, z: self.config.n_z as f32};
         let center = F32_3 {x: cx, y: cy, z: cz};
@@ -298,6 +310,7 @@ impl LbmDomain {
             ModelType::Solid => 0b00000001,
             ModelType::Magnet { magnetization: _ } => 0b00010001,
             ModelType::Charged { charge: _ } => 0b00001001,
+            ModelType::ChargedECR { charge: _ } => 0b00000101,
         };
 
         self.kernel_voxelize_mesh.set_arg("direction", direction).unwrap();

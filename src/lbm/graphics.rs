@@ -4,7 +4,7 @@
 //! 
 //! This module contains functions to configure the included graphics engine and to render simulations.
 
-use std::{f32::consts::PI, fs::File, io::BufWriter, path::Display, sync::mpsc::Sender, thread};
+use std::{f32::consts::PI, fs::File, io::BufWriter, sync::mpsc::Sender, thread};
 use log::info;
 use ocl::{Buffer, Kernel, Program, Queue};
 use ocl_macros::*;
@@ -123,6 +123,9 @@ pub struct GraphicsConfig {
     pub slice_x: u32,
     pub slice_y: u32,
     pub slice_z: u32,
+    pub max_slice_x: u32,
+    pub max_slice_y: u32,
+    pub max_slice_z: u32,
     pub field_vis: FieldVisMode,
 
     /// Visualize a vector field as streamlines
@@ -167,6 +170,9 @@ impl GraphicsConfig {
             slice_x: 0,
             slice_y: 0,
             slice_z: 0,
+            max_slice_x: 0,
+            max_slice_y: 0,
+            max_slice_z: 0,
             field_vis: FieldVisMode::Vector,
 
             streamline_mode: false,
@@ -207,7 +213,7 @@ pub struct Graphics {
 impl Graphics {
     #[rustfmt::skip]
     pub fn new(
-        lbm_config: &LbmConfig,
+        lbm_config: &mut LbmConfig,
         program: &Program,
         queue: &Queue,
         flags: &Buffer<u8>,
@@ -218,6 +224,9 @@ impl Graphics {
     ) -> Graphics {
         let width =  lbm_config.graphics_config.camera_width;
         let height = lbm_config.graphics_config.camera_height;
+        lbm_config.graphics_config.max_slice_x = lbm_config.n_x - 1;
+        lbm_config.graphics_config.max_slice_y = lbm_config.n_y - 1;
+        lbm_config.graphics_config.max_slice_z = lbm_config.n_z - 1;
         let n = n_d.0 as u64 * n_d.1 as u64 * n_d.2 as u64;
 
         info!("Allocating graphics buffers...");
