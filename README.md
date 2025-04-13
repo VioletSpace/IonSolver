@@ -12,7 +12,13 @@ IonSolver is a magnetohydrodynamic simulation software using an extended Lattice
 This software was created as part of the Jugend Forscht competition 2024 in the Physics category and reached 1th place in the regional and state level as well as 4th place on the national level. It will continue to receive updates past the competition. 
 
 ## Usage
-<img src="https://github.com/PipInSpace/IonSolver/blob/main/icons/Screenshot.png?raw=true">
+<img src="https://github.com/PipInSpace/IonSolver/blob/main/icons/terminal_output.png?raw=true" alt="IonSolver log output">
+IonSolver log output.
+<img src="https://github.com/PipInSpace/IonSolver/blob/main/icons/thruster_ecr.png?raw=true" alt="Simulation featuring an ECR ion thruster. The electron cyclotron resonance region is highlighted in cyan.">
+Simulation featuring an ECR ion thruster. The electron cyclotron resonance region is highlighted in cyan.
+<img src="https://github.com/PipInSpace/IonSolver/blob/main/icons/thruster_b_strength.png?raw=true" alt="Cross section of the above ECR thruster. The strength of the B field is visualised with the iron colour map.">
+Cross section of the above ECR thruster. The strength of the B field is visualised with the iron colour map.
+
 IonSolver is not provided as a single executable but needs to be compiled from source. It also features multiple optional features that need to be manually activated. To run this software, first clone this repository and install rust if not installed already.
 The software is compiled with the command:
 
