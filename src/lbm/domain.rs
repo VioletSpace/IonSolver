@@ -556,8 +556,24 @@ impl LbmDomain {
     }
 
     pub fn enqueue_precompute_e(&mut self) {
+        self.kernel_static_e_from_mesh
+            .as_ref()
+            .expect("ext_magneto_hydro should be enabled")
+            .set_arg("E", self.e_stat.as_ref().expect("ext_magneto_hydro should be enabled"))
+            .unwrap();
         unsafe {
             self.kernel_static_e_from_mesh.as_ref().expect("ext_magnetohydro should be enabled").enq().unwrap();
+        }
+    }
+
+    pub fn enqueue_precompute_e_ecr(&mut self) {
+        self.kernel_static_e_from_mesh
+            .as_ref()
+            .expect("ext_magneto_hydro should be enabled")
+            .set_arg("E", self.e_var.as_ref().expect("ext_subgrid_ecr should be enabled"))
+            .unwrap();
+        unsafe {
+            self.kernel_static_e_from_mesh.as_ref().expect("ext_magneto_hydro should be enabled").enq().unwrap();
         }
     }
 
@@ -581,6 +597,7 @@ impl LbmDomain {
         let mut b_stat: Vec<f32> = vec![0.0; n as usize * 3];
         let mut e_dyn: Vec<f32> = vec![0.0; n as usize * 3];
         let mut b_dyn: Vec<f32> = vec![0.0; n as usize * 3];
+        let mut e_var: Vec<f32> = vec![0.0; n as usize * 3];
 
         self.rho.read(&mut rho).enq().unwrap();
         self.u.read(&mut u).enq().unwrap();
@@ -615,6 +632,12 @@ impl LbmDomain {
             }
             None => {}
         }
+        match &self.e_var {
+            Some(es) => {
+                es.read(&mut e_var).enq().unwrap();
+            }
+            None => {}
+        }
 
         let rho_si = cfg.units.dens_lu_si(rho[c]);
         let u_x_si = cfg.units.speed_lu_si(u[c_x]);
@@ -632,6 +655,9 @@ impl LbmDomain {
         let e_dyn_x_si = cfg.units.e_field_lu_si(e_dyn[c_x]);
         let e_dyn_y_si = cfg.units.e_field_lu_si(e_dyn[c_y]);
         let e_dyn_z_si = cfg.units.e_field_lu_si(e_dyn[c_z]);
+        let e_var_x_si = cfg.units.e_field_lu_si(e_var[c_x]);
+        let e_var_y_si = cfg.units.e_field_lu_si(e_var[c_y]);
+        let e_var_z_si = cfg.units.e_field_lu_si(e_var[c_z]);
         let charge = cfg.units.charge_lu_si(q[c]);
 
         println!(
@@ -644,6 +670,7 @@ impl LbmDomain {
     b_stat:      {}, {}, {} / {}, {}, {} T
     e_dyn:  {}, {}, {} / {}, {}, {} V/m
     b_dyn:  {}, {}, {} / {}, {}, {} T
+    e_var:  {}, {}, {} / {}, {}, {} V/m
     charge: {} / {} As",
             c,
             x,
@@ -682,6 +709,12 @@ impl LbmDomain {
             b_dyn_x_si,
             b_dyn_y_si,
             b_dyn_z_si,
+            e_var[c_x],
+            e_var[c_y],
+            e_var[c_z],
+            e_var_x_si,
+            e_var_y_si,
+            e_var_z_si,
             q[c],
             charge
         )
@@ -808,7 +841,7 @@ fn get_device_defines(
     +"\n	#define DEF_KKGE  "       + &format!("{:?}f", lbm_config.units.kkge_lu()) // electron mass/charge in simulation units
     +"\n	#define DEF_KIMG  "       + &format!("{:?}f", lbm_config.units.kimg_lu()) // Inverse of mass of a propellant gas atom, scaled by 10^20
     +"\n	#define DEF_KVEV  "       + &format!("{:?}f", lbm_config.units.kveV_lu()) // 9.10938356e-31kg / (2*1.6021766208e-19)
-    +"\n	#define DEF_KME  "       + &format!("{:?}f", lbm_config.units.kme()) // 9.10938356e-31kg / (2*1.6021766208e-19)
+    +"\n	#define DEF_KME  "       + &format!("{:?}f", lbm_config.units.kme_lu()) // 9.10938356e-31kg / (2*1.6021766208e-19)
     +"\n	#define DEF_LOD_DEPTH "   + &format!("{}u", lbm_config.mhd_lod_depth)
     +"\n    #define DEF_NUM_LOD "     + &format!("{}u", n_lod)
     +"\n    #define DEF_NUM_LOD_OWN " + &format!("{}u", n_lod_own)

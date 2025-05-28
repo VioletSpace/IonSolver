@@ -240,6 +240,7 @@ impl SimControl {
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BStat, "Static B field").changed() {self.cfg_send = true;}
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::EDyn, "Dynamic E field").changed() {self.cfg_send = true;}
                             if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::BDyn, "Dynamic B field").changed() {self.cfg_send = true;}
+                            if ui.selectable_value(&mut self.graphics_cfg.vec_vis_mode, crate::lbm::graphics::VecVisMode::EVar, "Variable E field").changed() {self.cfg_send = true;}
                         });
                     ui.end_row();
 
@@ -275,6 +276,9 @@ impl SimControl {
                     ui.end_row();
                     ui.label("Slice Z");
                     if ui.add(egui::Slider::new(&mut self.graphics_cfg.slice_z, 0..=self.graphics_cfg.max_slice_z).suffix(" cells")).changed() {self.cfg_send = true;}
+                    ui.end_row();
+                    ui.label("V max");
+                    if ui.add(egui::Slider::new(&mut self.graphics_cfg.v_max, 0.0..=1_000_000_000_000.0).suffix("")).changed() {self.cfg_send = true;}
                     ui.end_row();
 
                     ui.label("Vorticity");

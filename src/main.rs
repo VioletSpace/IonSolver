@@ -224,6 +224,7 @@ fn simloop(sim_tx: mpsc::Sender<SimState>, ctrl_rx: mpsc::Receiver<SimControlTx>
                 }
 
                 lbm.do_time_step();
+                thread::sleep(Duration::from_secs(1));
                 //let v = bget!(lbm.domains[0].qu_lod.as_ref().expect("qu_lod"));
                 //println!("\nlod: {:?}", v);
 

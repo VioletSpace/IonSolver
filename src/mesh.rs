@@ -329,6 +329,9 @@ impl LbmDomain {
                 },
                 ModelType::Charged { charge } => {
                     self.kernel_voxelize_mesh.set_arg("mpc_x", self.cfg.units.charge_si_lu(charge)).unwrap();
+                },
+                ModelType::ChargedECR { charge } => {
+                    self.kernel_voxelize_mesh.set_arg("mpc_x", self.cfg.units.charge_si_lu(charge)).unwrap();
                 }
                 _ => {}
             }

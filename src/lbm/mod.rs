@@ -313,6 +313,23 @@ impl Lbm {
         }
     }
 
+    /// Computes the variable electric field from imported charged type meshes. This is only available with the
+    /// magneto_hydro and subgrid_ecr extensions and needs to be called before the simulation initialization.
+    #[allow(unused)]
+    pub fn precompute_E_ECR(&mut self) {
+        if self.config.ext_magneto_hydro && self.config.ext_subgrid_ecr {
+            info!("Calculating mesh variable electric field. (This may take a while)");
+            let now = std::time::Instant::now();
+            for d in &mut self.domains {
+                d.enqueue_precompute_e_ecr();
+            }
+            self.finish_queues();
+            info!("Calculated mesh variable electric field in {} s", now.elapsed().as_secs());
+        } else {
+            warn!("Electromagnetic field computation is only available wit the magneto_hydro and subgrid_ecr extension.")
+        }
+    }
+
     /// Executes initialize kernel
     fn kernel_initialize(&self) {
         for d in 0..self.get_d_n() {

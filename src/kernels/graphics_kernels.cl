@@ -20,9 +20,9 @@
 
 #define TYPE_S 0x01 // 0b00000001 // (stationary or moving) solid boundary
 #define TYPE_E 0x02 // 0b00000010 // equilibrium boundary (inflow/outflow)
-#define TYPE_F 0x08 // 0b00001000 // fluid
-#define TYPE_M 0x10 // 0b00010000 // interface
-#define TYPE_G 0x20 // 0b00100000 // gas
+#define TYPE_C 0x08 // 0b00001000 // fluid
+#define TYPE_F 0x10 // 0b00010000 // interface
+#define TYPE_M 0x20 // 0b00100000 // gas
 #define TYPE_X 0x40 // 0b01000000 // reserved type X
 #define TYPE_Y 0x80 // 0b10000000 // reserved type Y
 #define TYPE_MS 0x03 // 0b00000011 // cell next to moving solid boundary
@@ -534,6 +534,7 @@ kernel void graphics_flags(const global uchar* flags, const global float* camera
 		flagsn_bo==TYPE_E ? COLOR_E : // equilibrium boundary
 		(flagsn_bo&(~TYPE_S))==TYPE_M ? COLOR_M : // magnet
 		(flagsn_bo&(~TYPE_S))==TYPE_F ? COLOR_Y : // charge
+		(flagsn_bo&(~TYPE_S))==TYPE_C ? COLOR_Y : // charge
 		flagsn_bo==TYPE_S ? COLOR_S : // solid boundary
 		COLOR_0; // regular or gas cell
 	//draw_point(p, c, camera_cache, bitmap, zbuffer); // draw one pixel for every boundary cell
@@ -644,7 +645,7 @@ kernel void graphics_flags_mc(const global uchar* flags, const global float* cam
 	}
 }
 /// Vector field as individual lines
-kernel void graphics_field(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer, const int slice_mode, const int slice_x, const int slice_y, const int slice_z) {
+kernel void graphics_field(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer, const int slice_mode, const int slice_x, const int slice_y, const int slice_z, const float v_max) {
 	const uint n = get_global_id(0);
 	if(n>=(uint)DEF_N||is_halo(n)) return; // don't execute graphics_field() on halo
 	const uint3 xyz = coordinates(n);
@@ -659,13 +660,13 @@ kernel void graphics_field(const global uchar* flags, const global float* u, con
 
 	float3 un = load_u(n, u); // cache velocity
 	const float ul = length(un);
-	if(DEF_SCALE_U*ul<0.1f) return; // don't draw lattice points where the velocity is lower than this threshold
-	const int c = iron_colormap(DEF_SCALE_U*ul); // coloring by velocity
+	if(v_max*ul<0.1f) return; // don't draw lattice points where the velocity is lower than this threshold
+	const int c = iron_colormap(v_max*ul); // coloring by velocity
 	draw_line(p-(0.5f/ul)*un, p+(0.5f/ul)*un, c, camera_cache, bitmap, zbuffer);
 
 }
 
-kernel void graphics_field_slice(const global uchar* flags, const global float* u, const global float* rho, const global float* camera, global int* bitmap, global int* zbuffer, const int field_mode, const int slice_mode, const int slice_x, const int slice_y, const int slice_z) {
+kernel void graphics_field_slice(const global uchar* flags, const global float* u, const global float* rho, const global float* camera, global int* bitmap, global int* zbuffer, const int field_mode, const int slice_mode, const int slice_x, const int slice_y, const int slice_z, const float v_max) {
 	const uint a = get_global_id(0);
 	const uint direction = (uint)clamp(slice_mode-1, 0, 2);
 	if(a>=get_area(direction)||slice_mode<1||slice_mode>3||(slice_mode==1&&(slice_x<0||slice_x>=(int)DEF_NX))||(slice_mode==2&&(slice_y<0||slice_y>=(int)DEF_NY))||(slice_mode==3&&(slice_z<0||slice_z>=(int)DEF_NZ))) return;
@@ -685,10 +686,10 @@ kernel void graphics_field_slice(const global uchar* flags, const global float* 
 	int c00=0, c01=0, c10=0, c11=0;
 	switch(field_mode) {
 		case 0: // coloring by velocity
-			c00 = iron_colormap(DEF_SCALE_U*length(load3(n00, u)));
-			c01 = iron_colormap(DEF_SCALE_U*length(load3(n01, u)));
-			c10 = iron_colormap(DEF_SCALE_U*length(load3(n10, u)));
-			c11 = iron_colormap(DEF_SCALE_U*length(load3(n11, u)));
+			c00 = iron_colormap(v_max*length(load3(n00, u)));
+			c01 = iron_colormap(v_max*length(load3(n01, u)));
+			c10 = iron_colormap(v_max*length(load3(n10, u)));
+			c11 = iron_colormap(v_max*length(load3(n11, u)));
 			break;
 		case 1: // coloring by density
 			c00 = fast_colormap(0.5f+DEF_SCALE_RHO*(rho[n00]-1.0f));
@@ -705,7 +706,7 @@ kernel void graphics_field_slice(const global uchar* flags, const global float* 
 }
 
 /// Vector field as streamlines
-kernel void graphics_streamline(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer, const int slice_mode, const int slice_x, const int slice_y, const int slice_z) {
+kernel void graphics_streamline(const global uchar* flags, const global float* u, const global float* camera, global int* bitmap, global int* zbuffer, const int slice_mode, const int slice_x, const int slice_y, const int slice_z, const float v_max) {
 	const uint n = get_global_id(0);
 	const float3 slice = position((uint3)(slice_x, slice_y, slice_z));
 	#ifndef D2Q9
@@ -744,8 +745,8 @@ kernel void graphics_streamline(const global uchar* flags, const global float* u
 			const float ul = length(un);
 			p0 = p1;
 			p1 += (dt/ul)*un; // integrate forward in time
-			if(DEF_SCALE_U*ul<0.1f||p1.x<-hLx||p1.x>hLx||p1.y<-hLy||p1.y>hLy||p1.z<-hLz||p1.z>hLz) break;
-			const int c = iron_colormap(DEF_SCALE_U*ul);
+			if(v_max*ul<0.1f||p1.x<-hLx||p1.x>hLx||p1.y<-hLy||p1.y>hLy||p1.z<-hLz||p1.z>hLz) break;
+			const int c = iron_colormap(v_max*ul);
 			draw_line(p0, p1, c, camera_cache, bitmap, zbuffer);
 		}
 	}

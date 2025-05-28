@@ -452,10 +452,11 @@ float mag_v(const uint n, const global float* V) { // Magnitude of a vector fiel
 }
 float3 grad_mag_v(const uint n, const global float* V) { // Gradient of the magnitude of a vector field at n
 	uint3 c = coordinates(n);
+	if (c.x == 0 || c.x == DEF_NX-1 || c.y == 0 || c.y == DEF_NY-1 || c.z == 0 || c.z == DEF_NZ-1) return (float3)(0.0f, 0.0f, 0.0f);
 	return (float3)(
 		mag_v(index(c + (uint3)(1, 0, 0)), V) - mag_v(index(c - (uint3)(1, 0, 0)), V) / 2.0f,
 		mag_v(index(c + (uint3)(0, 1, 0)), V) - mag_v(index(c - (uint3)(0, 1, 0)), V) / 2.0f,
-		mag_v(index(c + (uint3)(0, 0, 1)), V) - mag_v(index(c - (uint3)(0, 0, 1)), V) / 2.0f,
+		mag_v(index(c + (uint3)(0, 0, 1)), V) - mag_v(index(c - (uint3)(0, 0, 1)), V) / 2.0f
 	);
 }
 #endif // SUBGRID_ECR
@@ -537,6 +538,8 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 		load_f(n, ehn, ei, j, t); // perform streaming (part 2)
 		float rhon_e, uxn_e, uyn_e, uzn_e; // calculate local density and velocity for collision
 		calculate_rho_u(ehn, &rhon_e, &uxn_e, &uyn_e, &uzn_e); // calculate (charge) density and velocity fields from ei
+		if (n==0) printf("rhon_e: %f\n", rhon_e);
+		if (n==0) printf("rhon: %f\n", rhon);
 
 
 		/* --- Gas charge advection 1 --- */
@@ -569,15 +572,21 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			for(uint i=0u; i<7u; i++) Etn += ethn[i]; // calculate temperature from g
 			Etn += 1.0f; // add 1.0f last to avoid digit extinction effects when summing up gi (perturbation method / DDF-shifting)
 			//}
+			if (n==0) printf("Etn: %f\n", Etn);
 
 
 			/* --------- ECR heating -------- */
 			float3 Env = {E_var[nxi], E_var[nyi], E_var[nzi]}; // Oscillating electric field as vector
+			if (n==0) printf("Env: %f, %f, %f\n", Env.x, Env.y, Env.z);
 			// calculate energy absorbtion under the possibility that frequency does not fulfill ECR condition
 			float f_c = length(Bn) * (1.0f / (DEF_KME * 2.0f * M_PI_F)); // The cyclotron frequency needed to fulfill ECR condition at current cell
+			if (n==0) printf("f_c: %f\n", f_c);
 			float rel_absorbtion = 1.0f / (1.0f + sq(ecrf / (0.03125 * f_c) - 32)); // dampening value 0.03125/32, computed through simulation and best fit aproximation
-			float Env_mag = length(Env - (dot(Env, Bn) / sq(length(B)))*Bn); // Magnitude of oscillating electric field components perpendicular to B, only these have effect for ECR
-			Etn += DEF_KEABS / DEF_KKBME * rhon_e / DEF_KKGE  * sq(Env_mag); // Energy increase W = (e² / 2m_e²) * m_e_all * E²
+			if (n==0) printf("rel_absorbtion: %f\n", rel_absorbtion);
+			float Env_mag = length(Env - (dot(Env, Bn) / sq(length(Bn)))*Bn); // Magnitude of oscillating electric field components perpendicular to B, only these have effect for ECR
+			if (n==0) printf("Env_mag: %f\n", Env_mag);
+			Etn += DEF_KEABS / DEF_KKBME * (rhon_e + 0.00001f) / DEF_KKGE  * sq(Env_mag); // Energy increase W = (e² / 2m_e²) * m_e_all * E²
+			if (n==0) printf("Etn up: %f\n", Etn);
 
 			// Drift of gyrating electrons in magnetic field. We assume all kinetic energy from electron
 			// temperature is directed perpendicular to the magnetic field. https://doi.org/10.1007/978-3-662-55236-0_1 2.2.4
@@ -586,7 +595,10 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			uxn_e += delta_u_par.x;
 			uyn_e += delta_u_par.y;
 			uzn_e += delta_u_par.z;
-			Etn -= length(delta_u_par) / DEF_KKBME // Temperature reduces proportional to the drift velocity
+			Etn -= length(delta_u_par) / DEF_KKBME; // Temperature reduces proportional to the drift velocity
+			if (n==0) printf("dup: %f, %f, %f\n", delta_u_par.x, delta_u_par.y, delta_u_par.z);
+			if (n==0) printf("un_e: %f, %f, %f\n", uxn_e, uyn_e, uzn_e);
+			if (n==0) printf("Etn up: %f\n", Etn);
 
 
 			/* --- Electron temperature 2 --- */
@@ -598,9 +610,9 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			#ifdef UPDATE_FIELDS
 				Et[n] = Etn; // update temperature field
 			#endif // UPDATE_FIELDS
-			for(uint i=0u; i<7u; i++) ethn[i] = fma(1.0f-def_w_T, ethn[i], def_w_T*eteq[i]); // perform collision
+			for(uint i=0u; i<7u; i++) ethn[i] = fma(1.0f-DEF_WQ, ethn[i], DEF_WQ*eteq[i]); // perform collision
 			//}
-			store_a(n, ethn, gi, j7, t); // perform streaming (part 1)
+			store_a(n, ethn, eti, j7, t); // perform streaming (part 1)
 
 
 			/* --------- Ionization --------- */
@@ -610,9 +622,10 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 			// $\Delta rhon_e=(rhon/m_g)*rhon_e*v_r*sigma_i(v_r)$
 			// DEF_KMG & sigma_i are scaled by a factor of 10^20 to minimize floating point imprecision
 			//float delta_q_rho = ((rhon*DEF_KIMG) * (rhon_e * DEF_KKGE) * v_r * calculate_sigma_i(v_r)) / DEF_KKGE;
-			float delta_q_rho = 0.0f;
+			float delta_q_rho = 0.0001f * Etn;
 			rhon_e += delta_q_rho; // Freeing of electrons through ionization adds charge/mass to the electron gas 
 			rhon_q += delta_q_rho; // Ionization of neutral gas adds charge to the neutral gas
+			if (n==0) printf("rhon_e up: %f\n", rhon_e);
 		#endif // SUBGRID_ECR
 
 
@@ -626,6 +639,7 @@ __kernel void stream_collide(global fpxx* fi, global float* rho, global float* u
 
 		/* ---- Electron gas part 2 ----- */
 		float3 e_fn = -rhon_e * (En + cross((float3)(uxn_e, uyn_e, uzn_e), Bn)); // F = charge * (E + (U cross B)), charge is content f ddfs
+		if (n==0) printf("e_fn: %f, %f, %f\n", e_fn.x, e_fn.y, e_fn.z);
 		const float rho2_e = 0.5f/(rhon_e * DEF_KKGE); // apply external volume force (Guo forcing, Krueger p.233f)
 		uxn_e = clamp(fma(e_fn.x, rho2_e, uxn_e), -DEF_C, DEF_C); // limit velocity (for stability purposes)
 		uyn_e = clamp(fma(e_fn.y, rho2_e, uyn_e), -DEF_C, DEF_C); // force term: F*dt/(2*rho)
@@ -806,7 +820,8 @@ __kernel void initialize(global fpxx* fi, global float* rho, global float* u, gl
 		E_dyn[nyi] = E[nyi];
 		E_dyn[nzi] = E[nzi];
 		// Initialize electron gas ddfs
-		calculate_f_eq(Q[n], u[n], u[DEF_N+(ulong)n], u[2ul*DEF_N+(ulong)n], fe_eq);
+		calculate_f_eq(0.0, u[n], u[DEF_N+(ulong)n], u[2ul*DEF_N+(ulong)n], fe_eq);
+		if (n==0) printf("Q[n]: %f\n", Q[n]);
 		store_f(n, fe_eq, ei, j, 1ul); // write to fi
 	#endif // MAGNETO_HYDRO
 	#ifdef SUBGRID_ECR
@@ -1206,7 +1221,7 @@ kernel void voxelize_mesh(const uint direction, global fpxx* fi, const global fl
 				B_dyn[          (ulong)n] = mpc_x;
 				B_dyn[    DEF_N+(ulong)n] = mpc_y;
 				B_dyn[2ul*DEF_N+(ulong)n] = mpc_z;
-			} else if (flag&TYPE_F) { // charged solid, add charge to b_dyn 
+			} else if (flag&TYPE_F || flag&TYPE_C) { // charged solid, add charge to b_dyn 
 				B_dyn[          (ulong)n] = mpc_x;
 			}
 			#endif // MAGNETO_HYDRO
@@ -1269,7 +1284,7 @@ kernel void static_e_from_mesh(const global uchar* flags, global float* E, const
 	float3 Ec = (float3)(0.0f, 0.0f, 0.0f);
 
 	for (int i = 0; i < DEF_N; i++) { // Iterate over every cell in simulation
-		if (flags[i]&TYPE_F) { // cell is charge
+		if (flags[i]&TYPE_F || flags[i]&TYPE_C) { // cell is charge
 			const float3 cdiff = c - convert_float3(coordinates(i));
 			const float l = length(cdiff);
 			if (!(l == 0.0f)) {
@@ -1279,8 +1294,8 @@ kernel void static_e_from_mesh(const global uchar* flags, global float* E, const
 		}
 	}
 
-	E[(ulong)n         ] += Ec.x;
-	E[(ulong)n+DEF_N   ] += Ec.y;
-	E[(ulong)n+DEF_N*2u] += Ec.z;
+	E[(ulong)n         ] += Ec.x * DEF_KE;
+	E[(ulong)n+DEF_N   ] += Ec.y * DEF_KE;
+	E[(ulong)n+DEF_N*2u] += Ec.z * DEF_KE;
 }
 #endif // MAGNETO_HYDRO

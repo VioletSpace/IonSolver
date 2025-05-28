@@ -20,6 +20,7 @@ pub enum VecVisMode {
     BStat,
     EDyn,
     BDyn,
+    EVar,
 }
 
 impl std::fmt::Display for VecVisMode {
@@ -30,6 +31,7 @@ impl std::fmt::Display for VecVisMode {
             VecVisMode::BStat => write!(f, "Static B field"),
             VecVisMode::EDyn => write!(f, "Dynamic E field"),
             VecVisMode::BDyn => write!(f, "Dynamic B field"),
+            VecVisMode::EVar => write!(f, "Variable E field")
         }
     }
 }
@@ -106,7 +108,7 @@ pub struct GraphicsConfig {
     /// Camera height (default: 1080)
     pub camera_height: u32,
     /// Velocity visualization maximum (default: 0.25)
-    pub u_max: f32,
+    pub v_max: f32,
     /// Vorticity visualization minimum (default: 0.0001)
     pub q_min: f32,
     /// Force visualization maximum (default: 0.002)
@@ -159,7 +161,7 @@ impl GraphicsConfig {
             background_color: 0x000000,
             camera_width: 1920,
             camera_height: 1080,
-            u_max: 0.25,
+            v_max: 0.25,
             q_min: 0.0001,
             f_max: 0.002,
             rho_delta: 0.5,
@@ -227,6 +229,7 @@ impl Graphics {
         lbm_config.graphics_config.max_slice_x = lbm_config.n_x - 1;
         lbm_config.graphics_config.max_slice_y = lbm_config.n_y - 1;
         lbm_config.graphics_config.max_slice_z = lbm_config.n_z - 1;
+        let v_max = lbm_config.graphics_config.v_max;
         let n = n_d.0 as u64 * n_d.1 as u64 * n_d.2 as u64;
 
         info!("Allocating graphics buffers...");
@@ -246,13 +249,13 @@ impl Graphics {
 
         // Graphics/Visualization kernels:
         let kernel_graphics_axes       = kernel!(program, queue, "graphics_axes",           1,                                           ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_field      = kernel!(program, queue, "graphics_field",        [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
-        let kernel_graphics_field_slice= kernel!(program, queue, "graphics_field_slice",  [1], ("flags", flags), ("u", u), ("rho", rho), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("field_mode", 0), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        let kernel_graphics_field      = kernel!(program, queue, "graphics_field",        [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0), ("v_max", v_max));
+        let kernel_graphics_field_slice= kernel!(program, queue, "graphics_field_slice",  [1], ("flags", flags), ("u", u), ("rho", rho), ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer), ("field_mode", 0), ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0), ("v_max", v_max));
         let kernel_graphics_flags      = kernel!(program, queue, "graphics_flags",        [n], ("flags", flags),                         ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_flags_mc   = kernel!(program, queue, "graphics_flags_mc",     [n], ("flags", flags),                         ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_q          = kernel!(program, queue, "graphics_q",            [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
         let kernel_graphics_q_field    = kernel!(program, queue, "graphics_q_field",      [n], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer));
-        let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0));
+        let kernel_graphics_streamline = kernel!(program, queue, "graphics_streamline", [sln], ("flags", flags), ("u", u),               ("camera_params", &camera_params), ("bitmap", &bitmap), ("zbuffer", &zbuffer),                    ("slice_mode", 0), ("slice_x", 0), ("slice_y", 0), ("slice_z", 0), ("v_max", v_max));
         let mut kernel_graphics_ecrc_met = None;
 
         if lbm_config.ext_magneto_hydro {
@@ -415,11 +418,13 @@ impl domain::LbmDomain {
                     VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
+                    VecVisMode::EVar => self.e_var.as_ref().expect("E_var buffer used but not initialized"),
                 }).unwrap();
                 graphics.kernel_graphics_streamline.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
                 graphics.kernel_graphics_streamline.set_arg("slice_x", cfg.slice_x).unwrap();
                 graphics.kernel_graphics_streamline.set_arg("slice_y", cfg.slice_y).unwrap();
                 graphics.kernel_graphics_streamline.set_arg("slice_z", cfg.slice_z).unwrap();
+                graphics.kernel_graphics_streamline.set_arg("v_max", 1.0f32 / (0.57735027f32 * cfg.v_max)).unwrap();
                 graphics.kernel_graphics_streamline.enq().unwrap();
             }
             if cfg.field_mode {
@@ -429,11 +434,13 @@ impl domain::LbmDomain {
                     VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
+                    VecVisMode::EVar => self.e_var.as_ref().expect("E_var buffer used but not initialized"),
                 }).unwrap();
                 graphics.kernel_graphics_field.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
                 graphics.kernel_graphics_field.set_arg("slice_x", cfg.slice_x).unwrap();
                 graphics.kernel_graphics_field.set_arg("slice_y", cfg.slice_y).unwrap();
                 graphics.kernel_graphics_field.set_arg("slice_z", cfg.slice_z).unwrap();
+                graphics.kernel_graphics_field.set_arg("v_max", 1.0f32 / (0.57735027f32 * cfg.v_max)).unwrap();
                 graphics.kernel_graphics_field.enq().unwrap();
             }
             if cfg.field_slice_mode {
@@ -443,12 +450,14 @@ impl domain::LbmDomain {
                     VecVisMode::BStat => self.b_stat.as_ref().expect("B_stat buffer used but not initialized"),
                     VecVisMode::EDyn => self.e_dyn.as_ref().expect("E_dyn buffer used but not initialized"),
                     VecVisMode::BDyn => self.b_dyn.as_ref().expect("B_dyn buffer used but not initialized"),
+                    VecVisMode::EVar => self.e_var.as_ref().expect("E_var buffer used but not initialized"),
                 }).unwrap();
                 graphics.kernel_graphics_field_slice.set_arg("field_mode", cfg.field_vis as u32).unwrap();
                 graphics.kernel_graphics_field_slice.set_arg("slice_mode", cfg.slice_mode as u32).unwrap();
                 graphics.kernel_graphics_field_slice.set_arg("slice_x", cfg.slice_x).unwrap();
                 graphics.kernel_graphics_field_slice.set_arg("slice_y", cfg.slice_y).unwrap();
                 graphics.kernel_graphics_field_slice.set_arg("slice_z", cfg.slice_z).unwrap();
+                graphics.kernel_graphics_field_slice.set_arg("v_max", 1.0f32 / (0.57735027f32 * cfg.v_max)).unwrap();
                 match cfg.slice_mode {
                     SliceMode::Off => {},
                     SliceMode::X | SliceMode::Y | SliceMode::Z => {
@@ -511,7 +520,7 @@ pub fn get_graphics_defines(graphics_config: &GraphicsConfig) -> String {
     +"\n	#define DEF_BACKGROUND_COLOR "  + &graphics_config.background_color.to_string()
     +"\n	#define DEF_SCREEN_WIDTH "      + &graphics_config.camera_width.to_string()+"u"
     +"\n	#define DEF_SCREEN_HEIGHT "     + &graphics_config.camera_height.to_string()+"u"
-    +"\n	#define DEF_SCALE_U "           + &format!("{:?}f", 1.0f32 / (0.57735027f32 * graphics_config.u_max))
+    +"\n	#define DEF_SCALE_U "           + &format!("{:?}f", 1.0f32 / (0.57735027f32 * graphics_config.v_max))
     +"\n	#define DEF_SCALE_RHO "         + &format!("{:?}f", 0.5f32 / graphics_config.rho_delta)
     +"\n	#define DEF_SCALE_Q_MIN "       + &graphics_config.q_min.to_string()+"f"
     +"\n	#define DEF_SCALE_F "           + &(1.0f32 / graphics_config.f_max).to_string()+"f"

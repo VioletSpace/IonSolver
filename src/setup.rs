@@ -51,10 +51,10 @@ pub fn setup() -> Lbm {
     //let mut lbm = setup_taylor_green();
     //setup_verification()
     //setup_field_vis()
-    //setup_ecr_test()
+    setup_ecr_test()
     //setup_mesh_test()
     //setup_mesh_field_test()
-    setup_deeva_test()
+    //setup_deeva_test()
 
     //let now = std::time::Instant::now();
     //lbm.run(10);
@@ -129,7 +129,7 @@ fn setup_domain_test() -> Lbm {
     lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::U;
     lbm_config.graphics_config.streamline_mode = true;
     lbm_config.graphics_config.field_mode = false;
-    lbm_config.graphics_config.u_max = 0.3;
+    lbm_config.graphics_config.v_max = 0.3;
     lbm_config.graphics_config.axes_mode = true;
 
     let mut lbm = Lbm::new(lbm_config.clone());
@@ -161,7 +161,7 @@ fn setup_bfield_spin() -> Lbm {
     lbm_config.graphics_config.camera_height = 1080;
     lbm_config.graphics_config.streamline_every = 8;
     lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::EDyn;
-    lbm_config.graphics_config.u_max = 500.0;
+    lbm_config.graphics_config.v_max = 500.0;
     lbm_config.graphics_config.streamline_mode = true;
     lbm_config.graphics_config.axes_mode = true;
     lbm_config.graphics_config.q_mode = false;
@@ -260,7 +260,7 @@ fn setup_field_vis() -> Lbm {
     lbm_config.graphics_config.camera_height = 540;
     lbm_config.graphics_config.streamline_every = 16;
     lbm_config.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
-    lbm_config.graphics_config.u_max = 0.000000002;
+    lbm_config.graphics_config.v_max = 0.000000002;
     lbm_config.graphics_config.streamline_mode = true;
 
     let mut lbm = Lbm::new(lbm_config);
@@ -279,17 +279,39 @@ fn setup_field_vis() -> Lbm {
 #[allow(unused)]
 fn setup_ecr_test() -> Lbm {
     let mut lbm_config = LbmConfig::new();
-    lbm_config.n_x = 1;
-    lbm_config.n_y = 1;
-    lbm_config.n_z = 1;
+    lbm_config.units.set(1.0, 1.0, 1.0, 1.0, 1.0, 0.01, 10000.0, 10E-8, 0.0000000000001, 50000.0);
+    lbm_config.n_x = 10;
+    lbm_config.n_y = 10;
+    lbm_config.n_z = 10;
     lbm_config.velocity_set = VelocitySet::D3Q19;
     lbm_config.ext_volume_force = true;
     lbm_config.ext_magneto_hydro = true;
-    lbm_config.ext_subgrid_ecr = true;
-    lbm_config.ecr_freq = 0.1f32;
-    lbm_config.ecr_field_strength = 1.0f32;
+    //⌈lbm_config.ext_subgrid_ecr = true;
+    lbm_config.ecr_freq = lbm_config.units.time_lu_si(2.45E9f32);
+    lbm_config.mhd_lod_depth = 1;
 
-    let mut lbm = Lbm::new(lbm_config);
+    println!("{}", lbm_config.units.kme_lu());
+
+    let mut lbm = Lbm::new(lbm_config.clone());
+    let mut b = vec![0.0f32; 1000];
+    b.append(&mut vec![lbm_config.units.mag_flux_si_lu(0.0875); 1000]);
+    b.append(&mut vec![0.0; 1000]);
+    let mut e = vec![0.0f32; 1000];
+    e.append(&mut vec![0.0; 1000]);
+    e.append(&mut vec![lbm_config.units.e_field_si_lu(1000.0); 1000]);
+    bwrite!(lbm.domains[0].b_stat.as_ref().expect("msg"), b);
+    //bwrite!(lbm.domains[0].e_var.as_ref().expect("msg"), e);
+    //lbm.initialize();
+    //println!("\nStep 0");
+    //lbm.do_time_step();
+    //println!("\nStep 1");
+    //lbm.do_time_step();
+    //println!("\nStep 2");
+    //lbm.do_time_step();
+    //println!("\nStep 3");
+    //lbm.do_time_step();
+    //println!("\nStep 5");
+    //lbm.do_time_step();
 
     lbm
 }
@@ -337,7 +359,7 @@ fn setup_mesh_field_test() -> Lbm {
     cfg.graphics_config.graphics_active = true;
     cfg.graphics_config.streamline_every = 8;
     cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
-    cfg.graphics_config.u_max = 0.00002;
+    cfg.graphics_config.v_max = 0.00002;
     cfg.graphics_config.streamline_mode = true;
     cfg.graphics_config.streamline_every = 16;
     cfg.graphics_config.axes_mode = true;
@@ -369,9 +391,10 @@ fn setup_mesh_field_test() -> Lbm {
     lbm
 }
 
+#[allow(unused)]
 fn setup_deeva_test() -> Lbm {
     let mut cfg = LbmConfig::new();
-    cfg.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 1.2250, 0.0000000001, 1.0);
+    cfg.units.set(128.0, 1.0, 1.0, 1.0, 1.0, 0.1, 1.0, 10e-8, 1.0, 50000.0);
     cfg.n_x = 128;
     cfg.n_y = 256;
     cfg.n_z = 128;
@@ -381,11 +404,12 @@ fn setup_deeva_test() -> Lbm {
     // Extensions
     cfg.ext_volume_force = true;
     cfg.ext_magneto_hydro = true;
+    cfg.ext_subgrid_ecr = true;
     // Graphics
     cfg.graphics_config.graphics_active = true;
     cfg.graphics_config.streamline_every = 8;
     cfg.graphics_config.vec_vis_mode = graphics::VecVisMode::BStat;
-    cfg.graphics_config.u_max = 0.00003;
+    cfg.graphics_config.v_max = 25000000000.0;
     cfg.graphics_config.streamline_mode = true;
     cfg.graphics_config.streamline_every = 16;
     cfg.graphics_config.axes_mode = true;
@@ -402,13 +426,28 @@ fn setup_deeva_test() -> Lbm {
     lbm.import_mesh("stl/deeva_inlet.stl", 1.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
     lbm.import_mesh("stl/deeva_quartz_tube.stl", 1.0, 64.001, 0.0, 64.0, 0.0, 0.0, 0.0);
     lbm.import_mesh("stl/deeva_ring_magnet.stl", 1.0, 64.001, -0.5, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_e_plate1.stl", 1.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
+    lbm.import_mesh("stl/deeva_e_plate2.stl", 1.0, 64.0, 0.0, 64.0, 0.0, 0.0, 0.0);
     lbm.voxelise_mesh(0, mesh::ModelType::Magnet {magnetization: (0.0, 1000000.0, 0.0)});
     lbm.voxelise_mesh(1, mesh::ModelType::Solid);
     lbm.voxelise_mesh(2, mesh::ModelType::Solid);
     lbm.voxelise_mesh(3, mesh::ModelType::Magnet {magnetization: (0.0, 500000.0, 0.0)});
+    // Voltage: 2000 V
+    // Capacitor distance: 0.05m
+    // Capacitor surface area: 0,0015 m^2
+    // Capacitance: epsilon_0 * A / d = 0,00000000000026562563 farad
+    // charge: Q = C * V = 0,00000000053125126 coulomb
+    // charge per cell: 0,00000000053125126 coulomb / 2432 cells = 0,00000000000021844213 coulomb / cell
+    lbm.voxelise_mesh(4, mesh::ModelType::ChargedECR { charge:  0.00000000000021844213/2.0 });
+    lbm.voxelise_mesh(5, mesh::ModelType::ChargedECR { charge: -0.00000000000021844213/2.0 });
     lbm.precompute_B();
+    lbm.precompute_E_ECR();
 
-    lbm.domains[0].dump_cell((64 + (50 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
+    lbm.domains[0].dump_cell((64 + (80 + 64 * lbm.config.n_y) * lbm.config.n_x) as usize, &lbm.config);
+    lbm.initialize();
+    println!("Initialized");
+    lbm.do_time_step();
+
 
     lbm
 }

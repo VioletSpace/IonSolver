@@ -132,6 +132,16 @@ impl Units {
         q / (self.a * self.s)
     }
 
+    pub fn mag_flux_si_lu(&self, b: f32) -> f32 {
+        // b unit is Tesla (T) = V * s / m^2 = ((kg * m^2 / (s^3 * A)) * s) / m^2 = kg / (A * s²)
+        b / (self.kg / (self.a * sq(self.s)))
+    }
+
+    pub fn e_field_si_lu(&self, e: f32) -> f32 {
+        // E unit: V/m = (kg * m^2 / (s^3 * A)) / m = (kg * m) / (A * s³)
+        e / ((self.kg * self.m) / (self.a * cb(self.s)))
+    }
+
     pub fn magnetization_si_lu(&self, m: f32) -> f32 {
         m / (self.a / self.m)
     }
@@ -182,7 +192,7 @@ impl Units {
         (1.40897016100511360652E-8_f64 / (sqd(self.a as f64) * sqd(self.s as f64) / self.kg as f64 ) ) as f32
     }
 
-    pub fn kme(&self) -> f32 {
+    pub fn kme_lu(&self) -> f32 { // e / (m_e)
         (5.68563006E-12_f64 / (self.kg as f64 / (self.a as f64 * self.s as f64))) as f32
     }
 
